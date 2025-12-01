@@ -37,7 +37,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = statusItem?.button {
             let iconView = NSHostingView(rootView: MenuBarIconView())
-            iconView.frame = NSRect(x: 0, y: 0, width: 30, height: 22)
+            iconView.frame = NSRect(x: 0, y: 0, width: 22, height: 22)
             button.subviews.forEach { $0.removeFromSuperview() }
             button.addSubview(iconView)
             iconView.translatesAutoresizingMaskIntoConstraints = false

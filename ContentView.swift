@@ -7,120 +7,107 @@ struct ContentView: View {
     @State private var isAddingContact = false
     @State private var newContactName = ""
     @State private var newContactToken = ""
+    
     @State private var messageInput = ""
     @FocusState private var isInputFocused: Bool
     
+    // Wyszukiwanie
+    @State private var searchText = ""
+    
+    // Edycja wiadomości
+    @State private var messageToEdit: Message?
+    @State private var editContent = ""
+    @State private var showEditAlert = false
+    
+    // --- BODY ---
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
                 // --- HEADER (Nagłówek) ---
                 headerView
+                    .padding()
                     .background(.ultraThinMaterial)
-                    .overlay(
-                        Rectangle()
-                            .frame(height: 1)
-                            .foregroundStyle(Color.white.opacity(0.1)),
-                        alignment: .bottom
-                    )
+                    .shadow(color: .black.opacity(0.05), radius: 5, y: 5)
                     .zIndex(1)
                 
                 // --- CONTENT (Treść) ---
-                ZStack {
-                    // Ciemne tło
-                    Color(nsColor: .windowBackgroundColor).opacity(0.5)
-                        .ignoresSafeArea()
-                    
-                    if let contact = chatManager.currentContact {
-                        chatView(contact: contact)
-                            .transition(.move(edge: .trailing))
-                    } else {
-                        contactListView
-                            .transition(.move(edge: .leading))
+                if let contact = chatManager.currentContact {
+                    chatView(contact: contact)
+                        .transition(.move(edge: .trailing))
+                } else {
+                    contactListView
+                        .transition(.move(edge: .leading))
+                }
+                
+                // --- PASEK OFFLINE (Status połączenia) ---
+                if !chatManager.isConnected {
+                    HStack(spacing: 6) {
+                        Image(systemName: "wifi.slash")
+                        Text("Brak połączenia")
                     }
+                    .font(.caption)
+                    .fontWeight(.medium)
+                    .foregroundStyle(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 6)
+                    .background(Color.red.opacity(0.8))
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
             }
         }
         .frame(width: 340, height: 550)
-        .background(Color.black.opacity(0.8))
+        .background(Color(.windowBackgroundColor)) // Jeśli nie masz tego koloru w Assets, użyje domyślnego
         .background(.ultraThinMaterial)
+        .animation(.default, value: chatManager.isConnected)
+        // Alert do edycji wiadomości
+        .alert("Edytuj wiadomość", isPresented: $showEditAlert) {
+            TextField("Treść", text: $editContent)
+            Button("Zapisz") {
+                if let msg = messageToEdit, let id = msg.id {
+                    Task { await chatManager.editMessage(messageID: id, newContent: editContent) }
+                }
+            }
+            Button("Anuluj", role: .cancel) { }
+        }
+    } // <--- KONIEC BODY
+    
+    // --- LOGIKA FILTROWANIA (Teraz poprawnie poza body) ---
+    var filteredContacts: [Contact] {
+        if searchText.isEmpty {
+            return chatManager.contacts
+        } else {
+            return chatManager.contacts.filter { contact in
+                contact.name.localizedCaseInsensitiveContains(searchText)
+            }
+        }
     }
     
     // --- KOMPONENTY ---
     
     var headerView: some View {
         HStack {
-            // LEWA STRONA
-            HStack {
-                if let contact = chatManager.currentContact {
-                    // WIDOK CZATU: Przycisk powrotu + Status Rozmówcy
-                    Button(action: {
-                        withAnimation(.spring(response: 0.3)) {
-                            chatManager.currentContact = nil
-                        }
-                    }) {
-                        Image(systemName: "chevron.left")
-                            .font(.system(size: 16, weight: .semibold))
+            if chatManager.currentContact != nil {
+                Button(action: {
+                    withAnimation(.spring(response: 0.3)) {
+                        chatManager.currentContact = nil
+                        searchText = "" // Czyścimy szukanie przy powrocie
                     }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.white)
-                    
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(contact.name)
-                            .font(.headline)
-                            .foregroundStyle(.white)
-                        
-                        // Wyświetlanie statusu rozmówcy
-                        let status = chatManager.friendStatuses[contact.id] ?? .online
-                        HStack(spacing: 4) {
-                            Circle()
-                                .fill(status.color)
-                                .frame(width: 6, height: 6)
-                            Text(status.title)
-                                .font(.caption2)
-                                .foregroundStyle(.white.opacity(0.8))
-                        }
-                    }
-                } else {
-                    // WIDOK LISTY: Ustawienia + Mój Status
-                    SettingsLink {
-                        Image(systemName: "gearshape.fill")
-                            .font(.system(size: 16))
-                            .foregroundStyle(.white.opacity(0.7))
-                    }
-                    .buttonStyle(.plain)
-                    .keyboardShortcut(",", modifiers: .command)
-                    .help("Ustawienia (⌘,)")
-                    
-                    // Menu wyboru mojego statusu
-                    Menu {
-                        // Tutaj używamy Binding z logiką
-                        Picker("Mój status", selection: Binding(
-                            get: { chatManager.myStatus },
-                            set: { chatManager.changeMyStatus(to: $0) }
-                        )) {
-                            ForEach(UserStatus.allCases, id: \.self) { status in
-                                Label(status.title, systemImage: "circle.fill")
-                                    // .foregroundStyle nie działa wewnątrz Pickera w starszych macOS, ale zostawiamy dla nowszych
-                                    .tag(status)
-                            }
-                        }
-                    } label: {
-                        HStack(spacing: 6) {
-                            Text("Wiadomości")
-                                .font(.title3)
-                                .fontWeight(.bold)
-                                .foregroundStyle(.white)
-                            
-                            // Kropka mojego statusu
-                            Circle()
-                                .fill(chatManager.myStatus.color)
-                                .frame(width: 8, height: 8)
-                                .overlay(Circle().stroke(Color.white.opacity(0.2), lineWidth: 1))
-                        }
-                    }
-                    .menuStyle(.borderlessButton)
-                    .padding(.leading, 4)
+                }) {
+                    Image(systemName: "chevron.left")
+                        .bold()
                 }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                
+                VStack(alignment: .leading) {
+                    Text(chatManager.currentContact?.name ?? "Czat")
+                        .font(.headline)
+                    // Tutaj można dodać status online/offline znajomego
+                }
+            } else {
+                Text("Wiadomości")
+                    .font(.title3)
+                    .fontWeight(.bold)
             }
             
             Spacer()
@@ -142,53 +129,110 @@ struct ContentView: View {
             } label: {
                 Image(systemName: "person.crop.circle")
                     .font(.system(size: 22))
-                    .foregroundStyle(.white.opacity(0.8))
+                    .foregroundStyle(.secondary)
             }
             .menuStyle(.borderlessButton)
             .fixedSize()
         }
-        .padding(.horizontal, 16)
-        .frame(height: 60)
     }
     
     var contactListView: some View {
-            ScrollView {
-                VStack(spacing: 10) {
-                    // Przycisk Dodawania
-                    if !isAddingContact {
-                        Button(action: { withAnimation { isAddingContact = true } }) {
-                            HStack {
-                                Image(systemName: "plus")
-                                Text("Dodaj nowy kontakt")
-                            }
-                            .foregroundStyle(.white.opacity(0.8))
-                            .frame(maxWidth: .infinity)
-                            .padding(12)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 10)
-                                    .stroke(Color.white.opacity(0.2), lineWidth: 1)
-                            )
+        VStack(spacing: 0) {
+            // 1. PASEK WYSZUKIWANIA
+            if !chatManager.contacts.isEmpty {
+                HStack(spacing: 8) {
+                    Image(systemName: "magnifyingglass")
+                        .foregroundStyle(.secondary)
+                    
+                    TextField("Szukaj kontaktu...", text: $searchText)
+                        .textFieldStyle(.plain)
+                    
+                    if !searchText.isEmpty {
+                        Button(action: { searchText = "" }) {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundStyle(.secondary)
                         }
                         .buttonStyle(.plain)
-                        .padding(.top, 10)
+                    }
+                }
+                .padding(10)
+                .background(Color.white.opacity(0.1))
+                .cornerRadius(8)
+                .padding(.horizontal)
+                .padding(.top, 10)
+            }
+            
+            // 2. LISTA KONTAKTÓW
+            ScrollView {
+                VStack(spacing: 10) {
+                    if filteredContacts.isEmpty && !searchText.isEmpty {
+                        Text("Nie znaleziono \"\(searchText)\"")
+                            .foregroundStyle(.secondary)
+                            .padding(.top, 20)
+                    }
+                    else if chatManager.contacts.isEmpty {
+                        VStack(spacing: 15) {
+                            Image(systemName: "paperplane")
+                                .font(.system(size: 40))
+                                .foregroundStyle(.gray.opacity(0.3))
+                            Text("Nikogo tu jeszcze nie ma")
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(.top, 50)
+                    }
+                    else {
+                        ForEach(filteredContacts) { contact in
+                            HStack {
+                                Circle()
+                                    .fill(Color.accentColor.opacity(0.1))
+                                    .frame(width: 40, height: 40)
+                                    .overlay(
+                                        Text(String(contact.name.prefix(1)))
+                                            .bold()
+                                            .foregroundStyle(Color.accentColor)
+                                    )
+                                
+                                VStack(alignment: .leading) {
+                                    Text(contact.name)
+                                        .font(.system(.body, design: .rounded))
+                                        .bold()
+                                }
+                                Spacer()
+                                Image(systemName: "chevron.right")
+                                    .font(.caption)
+                                    .foregroundStyle(.tertiary)
+                            }
+                            .padding(10)
+                            .background(Color.white.opacity(0.05))
+                            .cornerRadius(12)
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                withAnimation(.spring(response: 0.3)) {
+                                    chatManager.currentContact = contact
+                                    searchText = ""
+                                }
+                                // Dodajemy Task { }
+                                Task {
+                                    await chatManager.fetchMessages()
+                                }
+                            }
+                            .contextMenu {
+                                Button("Usuń", role: .destructive) {
+                                    if let index = chatManager.contacts.firstIndex(where: { $0.id == contact.id }) {
+                                        chatManager.removeContact(at: IndexSet(integer: index))
+                                    }
+                                }
+                            }
+                        }
                     }
                     
-                    // Formularz dodawania
-                    if isAddingContact {
-                        VStack(spacing: 12) {
-                            TextField("Nazwa", text: $newContactName)
-                                .textFieldStyle(.plain)
-                                .padding(8)
-                                .background(Color.black.opacity(0.3))
-                                .cornerRadius(6)
-                                .foregroundStyle(.white)
-                            
+                    // 3. SEKCJA DODAWANIA
+                    VStack(spacing: 12) {
+                        if isAddingContact {
+                            TextField("Nazwa (np. Kasia)", text: $newContactName)
+                                .textFieldStyle(.roundedBorder)
                             TextField("Token ID", text: $newContactToken)
-                                .textFieldStyle(.plain)
-                                .padding(8)
-                                .background(Color.black.opacity(0.3))
-                                .cornerRadius(6)
-                                .foregroundStyle(.white)
+                                .textFieldStyle(.roundedBorder)
                             
                             HStack {
                                 Button("Anuluj") { withAnimation { isAddingContact = false } }
@@ -205,175 +249,174 @@ struct ContentView: View {
                                 }
                                 .buttonStyle(.borderedProminent)
                             }
-                        }
-                        .padding()
-                        .background(Color.white.opacity(0.05))
-                        .cornerRadius(12)
-                    }
-                    
-                    // Lista kontaktów
-                    if chatManager.contacts.isEmpty && !isAddingContact {
-                        VStack(spacing: 15) {
-                            Spacer().frame(height: 30)
-                            Image(systemName: "person.2.slash")
-                                .font(.system(size: 40))
-                                .foregroundStyle(.white.opacity(0.2))
-                            Text("Brak kontaktów")
-                                .foregroundStyle(.white.opacity(0.4))
-                        }
-                    } else {
-                        ForEach(chatManager.contacts) { contact in
-                            HStack {
-                                // AWATAR Z KROPKĄ STATUSU
-                                ZStack(alignment: .bottomTrailing) {
-                                    Circle()
-                                        .fill(LinearGradient(colors: [.blue, .purple], startPoint: .topLeading, endPoint: .bottomTrailing))
-                                        .frame(width: 40, height: 40)
-                                        .overlay(
-                                            Text(String(contact.name.prefix(1)).uppercased())
-                                                .bold()
-                                                .foregroundStyle(.white)
-                                        )
-                                    
-                                    let status = chatManager.friendStatuses[contact.id] ?? .online
-                                    Circle()
-                                        .fill(status.color)
-                                        .frame(width: 12, height: 12)
-                                        .overlay(Circle().stroke(Color.black.opacity(0.5), lineWidth: 2))
-                                }
-                                
-                                Text(contact.name)
-                                    .font(.system(.body, design: .rounded))
-                                    .bold()
-                                    .foregroundStyle(.white)
-                                
-                                Spacer()
-                                
-                                Image(systemName: "chevron.right")
-                                    .font(.caption)
-                                    .foregroundStyle(.white.opacity(0.3))
+                        } else {
+                            Button(action: { withAnimation { isAddingContact = true } }) {
+                                Label("Dodaj nowy kontakt", systemImage: "plus")
+                                    .frame(maxWidth: .infinity)
+                                    .padding(8)
+                                    .background(Color.gray.opacity(0.1))
+                                    .cornerRadius(8)
                             }
-                            .padding(10)
-                            .background(Color.white.opacity(0.08))
-                            .cornerRadius(12)
-                            .contentShape(Rectangle())
-                            .onTapGesture {
-                                withAnimation(.spring(response: 0.3)) {
-                                    chatManager.currentContact = contact
-                                }
-                                // --- TU BYŁ BŁĄD: Musi być Task { ... } ---
-                                Task {
-                                    await chatManager.fetchMessages()
-                                    chatManager.markMessagesAsRead(from: contact.id)
-                                }
-                            }
-                            .contextMenu {
-                                Button("Usuń", role: .destructive) {
-                                    if let index = chatManager.contacts.firstIndex(where: { $0.id == contact.id }) {
-                                        chatManager.removeContact(at: IndexSet(integer: index))
-                                    }
-                                }
-                            }
+                            .buttonStyle(.plain)
                         }
                     }
+                    .padding()
+                    .background(Color.white.opacity(0.05))
+                    .cornerRadius(12)
+                    .padding(.top, 10)
                 }
                 .padding()
             }
         }
+    }
     
     func chatView(contact: Contact) -> some View {
-        VStack(spacing: 0) {
-            ScrollViewReader { proxy in
-                ScrollView {
-                    LazyVStack(spacing: 12) {
-                        Color.clear.frame(height: 10)
+            VStack(spacing: 0) {
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        // --- 1. SPINNER (Jeśli ładujemy i pusto) ---
+                        if chatManager.isLoading && chatManager.messages.isEmpty {
+                            VStack(spacing: 15) {
+                                Spacer().frame(height: 100) // Odstęp od góry
+                                ProgressView()
+                                    .controlSize(.large) // Większe kółko
+                                Text("Wczytywanie historii...")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            .frame(maxWidth: .infinity)
+                        }
                         
-                        ForEach(chatManager.messages) { msg in
-                            MessageBubble(
-                                message: msg,
-                                isMe: msg.sender_id == chatManager.myID,
-                                onExpand: {
-                                    if msg.id == chatManager.messages.last?.id {
-                                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                                            withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
-                                                proxy.scrollTo("bottomID", anchor: .bottom)
-                                            }
-                                        }
+                        // --- 2. LISTA WIADOMOŚCI (Jeśli są dane) ---
+                        else {
+                            LazyVStack(spacing: 0) { // Spacing 0, bo odstępy są w MessageBubble
+                                Color.clear.frame(height: 10)
+                                
+                                ForEach(Array(chatManager.messages.enumerated()), id: \.element.id) { index, msg in
+                                    
+                                    // A. LOGIKA DATY (Nagłówki "Dzisiaj", "Wczoraj")
+                                    let showDateHeader: Bool = {
+                                        if index == 0 { return true }
+                                        guard let currDate = msg.created_at,
+                                              let prevDate = chatManager.messages[index - 1].created_at else { return false }
+                                        return !Calendar.current.isDate(currDate, inSameDayAs: prevDate)
+                                    }()
+                                    
+                                    if showDateHeader, let date = msg.created_at {
+                                        DateHeader(date: date)
                                     }
+                                    
+                                    // B. LOGIKA GRUPOWANIA (Inteligentne rogi)
+                                    let isPreviousSame: Bool = {
+                                        if index == 0 { return false }
+                                        if showDateHeader { return false } // Nowy dzień przerywa grupę
+                                        return chatManager.messages[index - 1].sender_id == msg.sender_id
+                                    }()
+                                    
+                                    let isNextSame: Bool = {
+                                        if index >= chatManager.messages.count - 1 { return false }
+                                        guard let currDate = msg.created_at,
+                                              let nextDate = chatManager.messages[index + 1].created_at else { return false }
+                                        if !Calendar.current.isDate(currDate, inSameDayAs: nextDate) { return false }
+                                        return chatManager.messages[index + 1].sender_id == msg.sender_id
+                                    }()
+                                    
+                                    // C. DYMEK WIADOMOŚCI
+                                    MessageBubble(
+                                        message: msg,
+                                        isMe: msg.sender_id == chatManager.myID,
+                                        isPreviousFromSameSender: isPreviousSame,
+                                        isNextFromSameSender: isNextSame,
+                                        onExpand: {
+                                            // Scrolluj na dół przy rozwinięciu ostatniej wiadomości
+                                            if msg.id == chatManager.messages.last?.id {
+                                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                                                    withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                                                        proxy.scrollTo(msg.id, anchor: .bottom)
+                                                    }
+                                                }
+                                            }
+                                        },
+                                        onEdit: {
+                                            messageToEdit = msg
+                                            editContent = msg.content
+                                            showEditAlert = true
+                                        },
+                                        onDelete: {
+                                            if let id = msg.id { Task { await chatManager.deleteMessage(messageID: id) } }
+                                        }
+                                    )
+                                    .id(msg.id)
                                 }
-                            )
-                            .id(msg.id)
-                        }
-                        
-                        Color.clear
-                            .frame(height: 50)
-                            .id("bottomID")
-                    }
-                    .padding(.horizontal)
-                }
-                .onChange(of: chatManager.messages) {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                        withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
-                            proxy.scrollTo("bottomID", anchor: .bottom)
+                                
+                                Color.clear.frame(height: 20)
+                            }
+                            .padding(.horizontal)
                         }
                     }
-                }
-                .onAppear {
-                    proxy.scrollTo("bottomID", anchor: .bottom)
-                    isInputFocused = true
-                }
-            }
-            
-            // Wskaźnik pisania
-            if chatManager.typingUserID == contact.id {
-                HStack {
-                    TypingIndicatorView()
-                    Text("\(contact.name) pisze...")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                }
-                .padding(.horizontal, 20)
-                .padding(.bottom, 4)
-                .transition(.opacity.animation(.easeInOut))
-            }
-            
-            // Input Bar
-            HStack(spacing: 10) {
-                TextField("Napisz wiadomość…", text: $messageInput)
-                    .textFieldStyle(.plain)
-                    .focused($isInputFocused)
-                    .foregroundStyle(.white)
-                    .padding(10)
-                    .background(Color.white.opacity(0.1))
-                    .clipShape(Capsule())
-                    .overlay(
-                        Capsule()
-                            .stroke(Color.white.opacity(0.1), lineWidth: 1)
-                    )
-                    .onSubmit(sendMessage)
-                    .onChange(of: messageInput) {
-                        if !messageInput.isEmpty {
-                            // Wyślij sygnał "typing" w kontekście asynchronicznym
-                            Task { await chatManager.sendTypingSignal() }
+                    // Automatyczne przewijanie na dół przy nowej wiadomości
+                    .onChange(of: chatManager.messages) {
+                        if let lastMsg = chatManager.messages.last {
+                            withAnimation { proxy.scrollTo(lastMsg.id, anchor: .bottom) }
                         }
                     }
+                    .onAppear {
+                        if let lastMsg = chatManager.messages.last {
+                            proxy.scrollTo(lastMsg.id, anchor: .bottom)
+                        }
+                        isInputFocused = true
+                    }
+                }
                 
-                Button(action: sendMessage) {
-                    Image(systemName: "arrow.up.circle.fill")
-                        .resizable()
-                        .frame(width: 30, height: 30)
-                        .foregroundStyle(messageInput.isEmpty ? Color.white.opacity(0.2) : Color.blue)
-                        .background(Color.white.opacity(0.1))
-                        .clipShape(Circle())
+                // --- 3. WSKAŹNIK PISANIA ---
+                if chatManager.typingUserID == contact.id {
+                    HStack {
+                        TypingIndicatorView()
+                        Text("\(contact.name) pisze...")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, 4)
+                    .transition(.opacity.animation(.easeInOut))
                 }
-                .buttonStyle(.plain)
-                .disabled(messageInput.isEmpty)
+                
+                // --- 4. PASEK WPROWADZANIA (Input Bar) ---
+                HStack(spacing: 10) {
+                    TextField("Napisz wiadomość...", text: $messageInput)
+                        .textFieldStyle(.plain)
+                        .focused($isInputFocused)
+                        .foregroundStyle(.white)
+                        .padding(10)
+                        .background(Color.white.opacity(0.1))
+                        .clipShape(Capsule())
+                        .overlay(
+                            Capsule()
+                                .stroke(Color.white.opacity(0.1), lineWidth: 1)
+                        )
+                        .onSubmit(sendMessage)
+                        .onChange(of: messageInput) {
+                            if !messageInput.isEmpty {
+                                chatManager.sendTypingSignal()
+                            }
+                        }
+                    
+                    Button(action: sendMessage) {
+                        Image(systemName: "arrow.up.circle.fill")
+                            .resizable()
+                            .frame(width: 30, height: 30)
+                            .foregroundStyle(messageInput.isEmpty ? Color.white.opacity(0.2) : Color.blue)
+                            .background(Color.white.opacity(0.1))
+                            .clipShape(Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(messageInput.isEmpty)
+                }
+                .padding(12)
+                .background(.ultraThinMaterial)
             }
-            .padding(12)
-            .background(.ultraThinMaterial)
         }
-    }
     
     func sendMessage() {
         guard !messageInput.isEmpty else { return }
@@ -383,11 +426,17 @@ struct ContentView: View {
     }
 }
 
-// Struktura MessageBubble (z poprzedniego kroku, dla pewności że jest)
+// --- POMOCNICZE STRUKTURY ---
+
 struct MessageBubble: View {
     let message: Message
     let isMe: Bool
+    var isPreviousFromSameSender: Bool = false
+    var isNextFromSameSender: Bool = false
+    
     var onExpand: (() -> Void)? = nil
+    var onEdit: (() -> Void)? = nil
+    var onDelete: (() -> Void)? = nil
     
     @State private var showDetails = false
     
@@ -396,7 +445,25 @@ struct MessageBubble: View {
             if isMe { Spacer() }
             
             VStack(alignment: isMe ? .trailing : .leading, spacing: 4) {
-                Text(message.content)
+                
+                if message.is_deleted == true {
+                    Text("🚫 Wiadomość usunięta")
+                        .font(.system(size: 13, weight: .light).italic())
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .foregroundStyle(.white.opacity(0.6))
+                        .background(Color.gray.opacity(0.2))
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                } else {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(message.content)
+                        if message.edited_at != nil {
+                            Text("(edytowano)")
+                                .font(.caption2)
+                                .foregroundStyle(.white.opacity(0.6))
+                                .padding(.top, 2)
+                        }
+                    }
                     .padding(.horizontal, 12)
                     .padding(.vertical, 8)
                     .foregroundStyle(.white)
@@ -404,10 +471,10 @@ struct MessageBubble: View {
                     .brightness(showDetails ? -0.15 : 0)
                     .clipShape(
                         .rect(
-                            topLeadingRadius: 16,
-                            bottomLeadingRadius: isMe ? 16 : 4,
-                            bottomTrailingRadius: isMe ? 4 : 16,
-                            topTrailingRadius: 16
+                            topLeadingRadius: (!isMe && isPreviousFromSameSender) ? 4 : 16,
+                            bottomLeadingRadius: (!isMe && isNextFromSameSender) ? 4 : (isMe ? 16 : 4),
+                            bottomTrailingRadius: (isMe && isNextFromSameSender) ? 4 : (isMe ? 4 : 16),
+                            topTrailingRadius: (isMe && isPreviousFromSameSender) ? 4 : 16
                         )
                     )
                     .contentShape(Rectangle())
@@ -417,42 +484,73 @@ struct MessageBubble: View {
                         }
                         if showDetails { onExpand?() }
                     }
+                    .contextMenu {
+                        if isMe {
+                            Button { onEdit?() } label: { Label("Edytuj", systemImage: "pencil") }
+                            Button(role: .destructive) { onDelete?() } label: { Label("Usuń", systemImage: "trash") }
+                        } else {
+                            Button("Kopiuj") {
+                                NSPasteboard.general.clearContents()
+                                NSPasteboard.general.setString(message.content, forType: .string)
+                            }
+                        }
+                    }
+                }
                 
-                if showDetails {
+                if showDetails && message.is_deleted != true {
                     HStack(spacing: 4) {
                         if let date = message.created_at {
                             Text(date.formatted(date: .omitted, time: .shortened))
                                 .font(.system(size: 9))
                                 .foregroundStyle(.white.opacity(0.5))
                         }
-                        
                         if isMe {
-                            if message.is_read == true {
-                                Image(systemName: "checkmark.circle.fill")
-                                    .font(.system(size: 10))
-                                    .foregroundStyle(.white.opacity(0.8))
-                            } else {
-                                Image(systemName: "checkmark.circle")
-                                    .font(.system(size: 10))
-                                    .foregroundStyle(.white.opacity(0.4))
-                            }
+                            Image(systemName: message.is_read == true ? "checkmark.circle.fill" : "checkmark.circle")
+                                .font(.system(size: 10))
+                                .foregroundStyle(.white.opacity(message.is_read == true ? 0.8 : 0.4))
                         }
                     }
                     .padding(.horizontal, 4)
                     .transition(.move(edge: .top).combined(with: .opacity))
                 }
             }
-            
             if !isMe { Spacer() }
+        }
+        .padding(.bottom, isNextFromSameSender ? 2 : 10)
+    }
+}
+
+struct DateHeader: View {
+    let date: Date
+    var body: some View {
+        Text(formatDate(date))
+            .font(.caption2)
+            .fontWeight(.medium)
+            .foregroundStyle(.white.opacity(0.6))
+            .padding(.vertical, 4)
+            .padding(.horizontal, 12)
+            .background(Color.black.opacity(0.2))
+            .clipShape(Capsule())
+            .padding(.vertical, 4)
+    }
+    
+    private func formatDate(_ date: Date) -> String {
+        let calendar = Calendar.current
+        if calendar.isDateInToday(date) { return "Dzisiaj" }
+        else if calendar.isDateInYesterday(date) { return "Wczoraj" }
+        else {
+            let formatter = DateFormatter()
+            formatter.dateStyle = .medium
+            formatter.timeStyle = .none
+            formatter.locale = Locale(identifier: "pl_PL")
+            return formatter.string(from: date)
         }
     }
 }
 
-// Struktura TypingIndicatorView (też dla pewności)
 struct TypingIndicatorView: View {
     @State private var numberOfDots = 3
     @State private var isAnimating = false
-    
     var body: some View {
         HStack(spacing: 4) {
             ForEach(0..<numberOfDots, id: \.self) { index in
@@ -461,15 +559,9 @@ struct TypingIndicatorView: View {
                     .foregroundStyle(.secondary)
                     .opacity(isAnimating ? 0.3 : 1.0)
                     .scaleEffect(isAnimating ? 0.8 : 1.0)
-                    .animation(
-                        .easeInOut(duration: 0.6)
-                        .repeatForever()
-                        .delay(0.2 * Double(index)),
-                        value: isAnimating
-                    )
+                    .animation(.easeInOut(duration: 0.6).repeatForever().delay(0.2 * Double(index)), value: isAnimating)
             }
         }
         .onAppear { isAnimating = true }
     }
 }
-
