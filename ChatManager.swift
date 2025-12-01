@@ -31,12 +31,14 @@ enum UserStatus: String, CaseIterable, Codable {
     case online = "online"
     case away = "away"
     case busy = "busy"
+    case offline = "offline"
     
     var color: Color {
         switch self {
         case .online: return .green
         case .away: return .orange
         case .busy: return .red
+        case .offline: return .gray
         }
     }
     
@@ -45,6 +47,7 @@ enum UserStatus: String, CaseIterable, Codable {
         case .online: return "Dostępny"
         case .away: return "Zaraz wracam"
         case .busy: return "Zajęty"
+        case .offline: return "Niedostępny"
         }
     }
 }
@@ -60,7 +63,7 @@ struct TypingEvent: Codable { let sender_id: UUID }
 
 @Observable
 class ChatManager {
-    // ⚠️⚠️⚠️ UZUPEŁNIJ DANE ⚠️⚠️⚠️
+    // ⚠️⚠️⚠️ UZUPEŁNIJ DANE PONIŻEJ JEŚLI SĄ PUSTE ⚠️⚠️⚠️
     private let client = SupabaseClient(
         supabaseURL: URL(string: "https://sfyhkqkxlwoigpmfevop.supabase.co")!,
         supabaseKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNmeWhrcWt4bHdvaWdwbWZldm9wIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQzOTAxOTUsImV4cCI6MjA3OTk2NjE5NX0._JqoDJ4H3wXdlfOBGtDqzNrWo3tJq0Fx80aMEyToxrk",
@@ -75,11 +78,17 @@ class ChatManager {
     var currentContact: Contact?
     var myStatus: UserStatus = .online
     var friendStatuses: [UUID: UserStatus] = [:]
+    
+    var unreadCounts: [UUID: Int] = [:]
+    
     var typingUserID: UUID? = nil
     private var typingTimeoutTimer: Timer?
     var isConnected: Bool = true
     private let monitor = NWPathMonitor()
     private var channel: RealtimeChannelV2?
+    
+    private var listenerTask: Task<Void, Never>?
+    
     var isLoading: Bool = false
     private var lastTypingSentAt: Date = .distantPast
     private let typingDebounceInterval: TimeInterval = 1.0
@@ -97,7 +106,13 @@ class ChatManager {
                 if self?.isConnected != hasConnection {
                     self?.isConnected = hasConnection
                     if hasConnection {
-                        Task { [weak self] in await self?.fetchMessages(); await self?.fetchFriendStatuses() }
+                        Task { [weak self] in
+                            await self?.fetchMessages()
+                            await self?.fetchFriendStatuses()
+                            await self?.fetchUnreadCounts()
+                            self?.setupRealtime()
+                            await self?.checkInitialAlerts()
+                        }
                     }
                 }
             }
@@ -115,8 +130,58 @@ class ChatManager {
             await MainActor.run { self.myID = authID }
             await ensureProfileExists(id: authID)
             await fetchFriendStatuses()
+            await fetchUnreadCounts()
             setupRealtime()
+            await checkInitialAlerts()
         } catch { print("❌ Błąd autoryzacji: \(error)") }
+    }
+    
+    func checkInitialAlerts() async {
+        do {
+            let unreadCount = try await client.database.from("messages")
+                .select("id", count: .exact)
+                .eq("receiver_id", value: myID)
+                .eq("is_read", value: false)
+                .execute().count ?? 0
+            
+            let pendingFilesCount = try await client.database.from("messages")
+                .select("id", count: .exact)
+                .eq("receiver_id", value: myID)
+                .eq("type", value: "file")
+                .eq("file_status", value: "pending")
+                .execute().count ?? 0
+            
+            await MainActor.run {
+                if pendingFilesCount > 0 {
+                    NotificationCenter.default.post(name: .incomingFile, object: nil)
+                } else if unreadCount > 0 {
+                    NotificationCenter.default.post(name: .unreadMessage, object: nil)
+                }
+            }
+        } catch {
+            print("Błąd sprawdzania statusu początkowego: \(error)")
+        }
+    }
+    
+    func fetchUnreadCounts() async {
+        do {
+            struct SenderID: Decodable { let sender_id: UUID }
+            let records: [SenderID] = try await client.database.from("messages")
+                .select("sender_id")
+                .eq("receiver_id", value: myID)
+                .eq("is_read", value: false)
+                .execute()
+                .value
+            
+            let counts = Dictionary(grouping: records, by: { $0.sender_id })
+                .mapValues { $0.count }
+            
+            await MainActor.run {
+                self.unreadCounts = counts
+            }
+        } catch {
+            print("Błąd pobierania liczników: \(error)")
+        }
     }
     
     func ensureProfileExists(id: UUID) async {
@@ -130,25 +195,53 @@ class ChatManager {
         let uniquePath = "\(myID)/\(UUID().uuidString)_\(fileName)"
         do {
             try await client.storage.from("files").upload(uniquePath, data: data, options: FileOptions(upsert: false))
-            let msg = Message(id: nil, sender_id: myID, receiver_id: friendID, content: "Wysłano plik: \(fileName)", created_at: nil, is_read: false, is_deleted: false, edited_at: nil, type: "file", file_path: uniquePath, file_name: fileName, file_size: Int64(data.count), file_status: "pending")
+            let msg = Message(id: nil, sender_id: myID, receiver_id: friendID, content: "Wysłano plik: \(fileName)", created_at: Date(), is_read: false, is_deleted: false, edited_at: nil, type: "file", file_path: uniquePath, file_name: fileName, file_size: Int64(data.count), file_status: "pending")
             try await client.database.from("messages").insert(msg).execute()
         } catch { print("❌ Błąd wysyłania: \(error)") }
     }
     
     func downloadFile(path: String) async -> Data? {
-        do { return try await client.storage.from("files").download(path: path) }
+        do {
+            let data = try await client.storage.from("files").download(path: path)
+            await deleteFileFromStorage(path: path)
+            return data
+        }
         catch { return nil }
+    }
+    
+    private func deleteFileFromStorage(path: String) async {
+        try? await client.storage.from("files").remove(paths: [path])
+        print("🗑️ Plik usunięty z serwera: \(path)")
     }
     
     func respondToFile(messageID: Int, accept: Bool) async {
         let newStatus = accept ? "accepted" : "rejected"
         try? await client.database.from("messages").update(["file_status": newStatus]).eq("id", value: messageID).execute()
+        
+        if !accept {
+            if let msg = messages.first(where: { $0.id == messageID }), let path = msg.file_path {
+                await deleteFileFromStorage(path: path)
+            }
+        }
+        
         await MainActor.run { if let index = messages.firstIndex(where: { $0.id == messageID }) { messages[index].file_status = newStatus } }
     }
     
     func changeMyStatus(to status: UserStatus) {
         self.myStatus = status
         Task { try? await client.database.from("profiles").update(["status": status.rawValue]).eq("id", value: myID).execute() }
+    }
+    
+    func setOfflineStatus() {
+        let semaphore = DispatchSemaphore(value: 0)
+        Task {
+            try? await client.database.from("profiles")
+                .update(["status": "offline"])
+                .eq("id", value: myID)
+                .execute()
+            semaphore.signal()
+        }
+        _ = semaphore.wait(timeout: .now() + 2.0)
     }
     
     func fetchFriendStatuses() async {
@@ -163,13 +256,15 @@ class ChatManager {
     }
     
     func setupRealtime() {
+        listenerTask?.cancel()
+        
         self.channel = client.channel("public:chat")
         guard let channel = channel else { return }
         let messageStream = channel.postgresChange(AnyAction.self, schema: "public", table: "messages")
         let profileStream = channel.postgresChange(UpdateAction.self, schema: "public", table: "profiles")
         let broadcastStream = channel.broadcastStream(event: "typing")
         
-        Task {
+        listenerTask = Task {
             await channel.subscribe()
             await MainActor.run { self.isConnected = true }
             await withTaskGroup(of: Void.self) { group in
@@ -185,6 +280,12 @@ class ChatManager {
                         }
                         
                         if let message = incomingMessage {
+                            if message.sender_id != self.myID && message.is_read == false {
+                                await MainActor.run {
+                                    self.unreadCounts[message.sender_id, default: 0] += 1
+                                }
+                            }
+                            
                             if (message.receiver_id == self.myID || message.sender_id == self.myID) {
                                 DispatchQueue.main.async {
                                     if let index = self.messages.firstIndex(where: { $0.id == message.id }) {
@@ -197,21 +298,16 @@ class ChatManager {
                                             if self.currentContact?.id == message.sender_id { self.markMessagesAsRead(from: message.sender_id) }
                                         }
                                         
-                                        // --- LOGIKA POWIADOMIEŃ I IKON ---
                                         if message.sender_id != self.myID {
-                                            // 1. Sprawdź czy to plik oczekujący
                                             if message.type == "file" && message.file_status == "pending" {
                                                 NotificationCenter.default.post(name: .incomingFile, object: nil)
                                             } else {
                                                 NotificationCenter.default.post(name: .unreadMessage, object: nil)
                                             }
                                             
-                                            // 2. Powiadomienie systemowe
                                             let senderName = self.contacts.first(where: { $0.id == message.sender_id })?.name ?? "Ktoś"
                                             let body = (message.type == "file") ? "Przesłał plik: \(message.file_name ?? "Dokument")" : message.content
                                             self.sendSystemNotification(title: senderName, body: body)
-                                            
-                                            // NSSound(named: "Glass")?.play()
                                         }
                                     }
                                 }
@@ -220,6 +316,7 @@ class ChatManager {
                     }
                 }
                 
+                // WĄTEK B: STATUSY
                 group.addTask {
                     for await change in profileStream {
                         if let profile = try? change.record.decode(as: Profile.self), let s = profile.status, let ns = UserStatus(rawValue: s) {
@@ -228,11 +325,23 @@ class ChatManager {
                     }
                 }
                 
+                // WĄTEK C: SYGNAŁY PISANIA
                 group.addTask {
                     let encoder = JSONEncoder()
+                    let decoder = JSONDecoder()
+                    
+                    struct BroadcastWrapper: Decodable {
+                        let payload: TypingEvent
+                    }
+                    
                     for await event in broadcastStream {
-                        if let data = try? encoder.encode(event), let typingEvent = try? JSONDecoder().decode(TypingEvent.self, from: data) {
-                            self.handleTypingEvent(senderID: typingEvent.sender_id)
+                        if let data = try? encoder.encode(event) {
+                            if let wrapper = try? decoder.decode(BroadcastWrapper.self, from: data) {
+                                self.handleTypingEvent(senderID: wrapper.payload.sender_id)
+                            }
+                            else if let typingEvent = try? decoder.decode(TypingEvent.self, from: data) {
+                                self.handleTypingEvent(senderID: typingEvent.sender_id)
+                            }
                         }
                     }
                 }
@@ -241,28 +350,23 @@ class ChatManager {
     }
     
     private func handleTypingEvent(senderID: UUID) {
-            // Ignoruj sygnały od samego siebie
-            if senderID == myID { return }
+        if senderID == myID { return }
+        
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(name: .typingStarted, object: nil)
             
-            // POPRAWKA: Usunęliśmy warunek 'if contacts.contains', który mógł blokować sygnał przy testach.
-            // Teraz zawsze wysyłamy powiadomienie do paska menu.
-            DispatchQueue.main.async {
-                NotificationCenter.default.post(name: .typingStarted, object: nil)
-                
-                // Reset timera (chowa ikonę po 3 sekundach braku aktywności)
-                self.typingTimeoutTimer?.invalidate()
-                self.typingTimeoutTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: false) { _ in
-                    NotificationCenter.default.post(name: .typingEnded, object: nil)
-                }
-            }
-            
-            // Logika dla widoku czatu (napis "Marek pisze...")
-            if currentContact?.id == senderID {
-                DispatchQueue.main.async {
-                    self.typingUserID = senderID
-                }
+            self.typingTimeoutTimer?.invalidate()
+            self.typingTimeoutTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: false) { _ in
+                NotificationCenter.default.post(name: .typingEnded, object: nil)
             }
         }
+        
+        if currentContact?.id == senderID {
+            DispatchQueue.main.async {
+                self.typingUserID = senderID
+            }
+        }
+    }
     
     func sendTypingSignal() {
         let now = Date()
@@ -286,27 +390,42 @@ class ChatManager {
     
     func sendMessage(_ text: String) async {
         guard let friendID = currentContact?.id else { return }
-        let msg = Message(id: nil, sender_id: myID, receiver_id: friendID, content: text, created_at: nil, is_read: false, is_deleted: false, edited_at: nil, type: "text")
+        let msg = Message(id: nil, sender_id: myID, receiver_id: friendID, content: text, created_at: Date(), is_read: false, is_deleted: false, edited_at: nil, type: "text")
         try? await client.database.from("messages").insert(msg).execute()
     }
     
+    // POPRAWIONE: Obsługa błędów przy usuwaniu
     func deleteMessage(messageID: Int) async {
-        try? await client.database.from("messages").update(["is_deleted": true]).eq("id", value: messageID).execute()
-        await MainActor.run { if let idx = messages.firstIndex(where: { $0.id == messageID }) { messages[idx].is_deleted = true } }
+        do {
+            try await client.database.from("messages").update(["is_deleted": true]).eq("id", value: messageID).execute()
+            await MainActor.run { if let idx = messages.firstIndex(where: { $0.id == messageID }) { messages[idx].is_deleted = true } }
+        } catch {
+            print("❌ Błąd usuwania wiadomości: \(error)")
+        }
     }
     
+    // POPRAWIONE: Obsługa błędów przy edycji
     func editMessage(messageID: Int, newContent: String) async {
         let updateData: [String: String] = ["content": newContent, "edited_at": ISO8601DateFormatter().string(from: Date())]
-        try? await client.database.from("messages").update(updateData).eq("id", value: messageID).execute()
-        await MainActor.run {
-            if let idx = messages.firstIndex(where: { $0.id == messageID }) {
-                messages[idx].content = newContent; messages[idx].edited_at = Date()
+        do {
+            try await client.database.from("messages").update(updateData).eq("id", value: messageID).execute()
+            await MainActor.run {
+                if let idx = messages.firstIndex(where: { $0.id == messageID }) {
+                    messages[idx].content = newContent; messages[idx].edited_at = Date()
+                }
             }
+        } catch {
+            print("❌ Błąd edycji wiadomości: \(error)")
         }
     }
     
     func markMessagesAsRead(from friendID: UUID) {
-        Task { try? await client.database.from("messages").update(["is_read": true]).eq("sender_id", value: friendID).eq("receiver_id", value: myID).eq("is_read", value: false).execute() }
+        Task {
+            try? await client.database.from("messages").update(["is_read": true]).eq("sender_id", value: friendID).eq("receiver_id", value: myID).eq("is_read", value: false).execute()
+            await MainActor.run {
+                self.unreadCounts[friendID] = 0
+            }
+        }
     }
     
     func addContact(name: String, tokenString: String) {
@@ -318,14 +437,11 @@ class ChatManager {
     private func saveContacts() { if let encoded = try? JSONEncoder().encode(contacts) { UserDefaults.standard.set(encoded, forKey: "savedContacts") } }
     private func loadContacts() { if let data = UserDefaults.standard.data(forKey: "savedContacts"), let decoded = try? JSONDecoder().decode([Contact].self, from: data) { self.contacts = decoded } }
     
-    // --- POWIADOMIENIA SYSTEMOWE ---
     private func sendSystemNotification(title: String, body: String) {
         let content = UNMutableNotificationContent()
         content.title = title
         content.body = body
         content.sound = .default
-        
-        // Ważne: Wymuszamy, żeby powiadomienie pokazało się nawet jak appka jest 'aktywna'
         UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil))
     }
 }

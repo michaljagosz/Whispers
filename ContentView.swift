@@ -1,8 +1,9 @@
 import SwiftUI
+import AppKit
 import UniformTypeIdentifiers
 
 struct ContentView: View {
-    @State private var chatManager = ChatManager()
+    var chatManager: ChatManager
     
     // UI State
     @State private var isAddingContact = false
@@ -24,6 +25,12 @@ struct ContentView: View {
     @State private var pendingFileName: String?
     @State private var isDropTargeted = false
     @State private var isSendingFile = false
+    
+    @State private var showFileAlert = false
+    let maxFileSize: Int64 = 50 * 1024 * 1024
+    
+    // Śledzenie liczby wiadomości do obsługi przewijania
+    @State private var previousMessageCount = 0
     
     var body: some View {
         NavigationStack {
@@ -52,21 +59,28 @@ struct ContentView: View {
                     .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
             }
-            // OBSŁUGA DRAG & DROP (POPRAWIONA)
             .onDrop(of: [.fileURL], isTargeted: $isDropTargeted) { providers in
                 return handleDrop(providers: providers)
             }
             .overlay {
                 if isDropTargeted {
                     ZStack {
+                        // 1. Tło na cały ekran (bez zmian)
                         Color.blue.opacity(0.2)
-                        RoundedRectangle(cornerRadius: 12)
-                            .strokeBorder(Color.blue, style: StrokeStyle(lineWidth: 3, dash: [10]))
+                            .ignoresSafeArea()
+                        
+                        // 2. Ramka z paddingiem (POPRAWKA: odsunięcie od krawędzi)
+                        RoundedRectangle(cornerRadius: 20) // Większe zaokrąglenie
+                            .strokeBorder(Color(NSColor.controlAccentColor), style: StrokeStyle(lineWidth: 3, dash: [10]))
+                            .padding(12) // Odsunięcie od krawędzi okna, żeby nie ucinało
+                        
+                        // 3. Ikona i tekst
                         VStack {
                             Image(systemName: "arrow.down.doc.fill").font(.system(size: 50))
                             Text("Upuść plik tutaj").font(.title2).bold()
-                        }.foregroundStyle(.blue)
-                    }.ignoresSafeArea().allowsHitTesting(false)
+                        }.foregroundStyle(Color(NSColor.controlAccentColor))
+                    }
+                    .allowsHitTesting(false)
                 }
             }
         }
@@ -82,19 +96,18 @@ struct ContentView: View {
             }
             Button("Anuluj", role: .cancel) { }
         }
+        .alert("Plik jest za duży", isPresented: $showFileAlert) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text("Maksymalny rozmiar pliku to 50 MB.")
+        }
     }
     
-    // --- POPRAWIONA OBSŁUGA PLIKÓW (FIX 0 BYTES) ---
     func handleDrop(providers: [NSItemProvider]) -> Bool {
         guard let provider = providers.first else { return false }
-        
-        // Zamiast loadDataRepresentation, używamy loadItem z fileURL, żeby dostać ścieżkę do pliku na dysku.
-        // To naprawia problem "nieznanego pliku" i "0 bajtów".
         if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
             provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { (item, error) in
-                // URL może być bezpośrednio URL-em lub Data
                 var fileURL: URL? = nil
-                
                 if let url = item as? URL {
                     fileURL = url
                 } else if let data = item as? Data {
@@ -102,19 +115,20 @@ struct ContentView: View {
                 }
                 
                 if let url = fileURL {
-                    // Mamy prawdziwą ścieżkę do pliku!
                     do {
-                        // Wczytujemy dane bezpośrednio z dysku
+                        let resources = try url.resourceValues(forKeys: [.fileSizeKey])
+                        if let fileSize = resources.fileSize, Int64(fileSize) > maxFileSize {
+                            DispatchQueue.main.async { self.showFileAlert = true }
+                            return
+                        }
+                        
                         let data = try Data(contentsOf: url)
                         let fileName = url.lastPathComponent
-                        
                         DispatchQueue.main.async {
                             self.pendingFileData = data
                             self.pendingFileName = fileName
                         }
-                    } catch {
-                        print("Błąd odczytu pliku: \(error)")
-                    }
+                    } catch { print("Błąd odczytu pliku: \(error)") }
                 }
             }
             return true
@@ -135,62 +149,158 @@ struct ContentView: View {
                 Button(action: {
                     withAnimation(.spring(response: 0.3)) {
                         chatManager.currentContact = nil; searchText = ""; pendingFileData = nil; pendingFileName = nil
+                        chatManager.messages = []
+                        previousMessageCount = 0
                     }
                 }) { Image(systemName: "chevron.left").bold() }.buttonStyle(.plain).foregroundStyle(.secondary)
-                VStack(alignment: .leading) { Text(chatManager.currentContact?.name ?? "Czat").font(.headline) }
+                VStack(alignment: .leading) {
+                    Text(chatManager.currentContact?.name ?? "Czat").font(.headline)
+                    if let contact = chatManager.currentContact, let status = chatManager.friendStatuses[contact.id] {
+                        HStack(spacing: 4) {
+                            Circle().fill(status.color).frame(width: 6, height: 6)
+                            Text(status.title).font(.caption2).foregroundStyle(.secondary)
+                        }
+                    }
+                }
             } else { Text("Wiadomości").font(.title3).fontWeight(.bold) }
+            
             Spacer()
+            
             Menu {
+                Picker("Mój status", selection: Binding(
+                    get: { chatManager.myStatus },
+                    set: { chatManager.changeMyStatus(to: $0) }
+                )) {
+                    ForEach(UserStatus.allCases, id: \.self) { status in
+                        Text(status.title).tag(status)
+                    }
+                }
+                .pickerStyle(.inline)
+                
+                Divider()
+                
                 Text("ID: ...\(chatManager.myID.uuidString.suffix(4))").font(.caption)
                 Button("Skopiuj moje ID") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(chatManager.myID.uuidString, forType: .string) }
                 Divider()
                 Button(role: .destructive) { NSApplication.shared.terminate(nil) } label: { Text("Zakończ aplikację") }
-            } label: { Image(systemName: "person.crop.circle").font(.system(size: 22)).foregroundStyle(.secondary) }.menuStyle(.borderlessButton).fixedSize()
+            } label: {
+                ZStack(alignment: .bottomTrailing) {
+                    Image(systemName: "person.crop.circle").font(.system(size: 22))
+                    Circle()
+                        .fill(chatManager.myStatus.color)
+                        .frame(width: 8, height: 8)
+                        .overlay(
+                            Circle().stroke(Color.white.opacity(0.5), lineWidth: 1)
+                        )
+                }
+                .foregroundStyle(.secondary)
+            }
+            .menuStyle(.borderlessButton).fixedSize()
         }
     }
     
     var contactListView: some View {
         VStack(spacing: 0) {
-            if !chatManager.contacts.isEmpty {
+            // PASEK WYSZUKIWANIA I DODAWANIA
+            if !chatManager.contacts.isEmpty || isAddingContact {
                 HStack(spacing: 8) {
                     Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
                     TextField("Szukaj kontaktu...", text: $searchText).textFieldStyle(.plain)
-                    if !searchText.isEmpty { Button(action: { searchText = "" }) { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }.buttonStyle(.plain) }
+                    if !searchText.isEmpty {
+                        Button(action: { searchText = "" }) { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }.buttonStyle(.plain)
+                    }
+                    
+                    Button(action: { withAnimation { isAddingContact.toggle() } }) {
+                        Image(systemName: isAddingContact ? "minus.circle.fill" : "plus.circle.fill")
+                            .font(.title3)
+                            .foregroundStyle(isAddingContact ? .gray : .blue)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Dodaj nowy kontakt")
+                    
                 }.padding(10).background(Color.white.opacity(0.1)).cornerRadius(8).padding(.horizontal).padding(.top, 10)
             }
+            
+            // FORMULARZ DODAWANIA KONTAKTU
+            if isAddingContact {
+                VStack(spacing: 10) {
+                    TextField("Nazwa", text: $newContactName).textFieldStyle(.roundedBorder)
+                    TextField("Token ID", text: $newContactToken).textFieldStyle(.roundedBorder)
+                    HStack {
+                        Spacer()
+                        Button("Zapisz") {
+                            if !newContactName.isEmpty && !newContactToken.isEmpty {
+                                chatManager.addContact(name: newContactName, tokenString: newContactToken)
+                                newContactName = ""
+                                newContactToken = ""
+                                withAnimation { isAddingContact = false }
+                            }
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                    }
+                }
+                .padding()
+                .background(Color.white.opacity(0.05))
+                .cornerRadius(10)
+                .padding(.horizontal)
+                .transition(.move(edge: .top).combined(with: .opacity))
+            }
+            
             ScrollView {
                 VStack(spacing: 10) {
                     if filteredContacts.isEmpty && !searchText.isEmpty { Text("Nie znaleziono \"\(searchText)\"").foregroundStyle(.secondary).padding(.top, 20) }
-                    else if chatManager.contacts.isEmpty {
-                        VStack(spacing: 15) { Image(systemName: "paperplane").font(.system(size: 40)).foregroundStyle(.gray.opacity(0.3)); Text("Nikogo tu jeszcze nie ma").foregroundStyle(.secondary) }.padding(.top, 50)
+                    else if chatManager.contacts.isEmpty && !isAddingContact {
+                        VStack(spacing: 15) {
+                            Image(systemName: "paperplane").font(.system(size: 40)).foregroundStyle(.gray.opacity(0.3))
+                            Text("Nikogo tu jeszcze nie ma").foregroundStyle(.secondary)
+                            Button("Dodaj kontakt") { withAnimation { isAddingContact = true } }
+                        }.padding(.top, 50)
                     } else {
                         ForEach(filteredContacts) { contact in
                             HStack {
-                                Circle().fill(Color.accentColor.opacity(0.1)).frame(width: 40, height: 40)
-                                    .overlay(Text(String(contact.name.prefix(1))).bold().foregroundStyle(Color.accentColor))
+                                ZStack(alignment: .bottomTrailing) {
+                                    Circle().fill(Color.accentColor.opacity(0.1)).frame(width: 40, height: 40)
+                                        .overlay(Text(String(contact.name.prefix(1))).bold().foregroundStyle(Color.accentColor))
+                                    
+                                    if let status = chatManager.friendStatuses[contact.id] {
+                                        Circle()
+                                            .fill(status.color)
+                                            .frame(width: 12, height: 12)
+                                            .overlay(
+                                                Circle().stroke(Color(.windowBackgroundColor), lineWidth: 2)
+                                            )
+                                    }
+                                }
+                                
                                 VStack(alignment: .leading) { Text(contact.name).font(.system(.body, design: .rounded)).bold() }
-                                Spacer(); Image(systemName: "chevron.right").font(.caption).foregroundStyle(.tertiary)
+                                Spacer()
+                                
+                                if let unreadCount = chatManager.unreadCounts[contact.id], unreadCount > 0 {
+                                    Text("\(unreadCount)")
+                                        .font(.caption2)
+                                        .fontWeight(.bold)
+                                        .foregroundStyle(.white)
+                                        .padding(.horizontal, 6)
+                                        .padding(.vertical, 2)
+                                        .background(Color.red)
+                                        .clipShape(Capsule())
+                                        .transition(.scale)
+                                }
+                                
+                                Image(systemName: "chevron.right").font(.caption).foregroundStyle(.tertiary)
                             }
                             .padding(10).background(Color.white.opacity(0.05)).cornerRadius(12).contentShape(Rectangle())
                             .onTapGesture {
                                 withAnimation(.spring(response: 0.3)) { chatManager.currentContact = contact; searchText = "" }
-                                Task { await chatManager.fetchMessages() }
+                                Task {
+                                    await chatManager.fetchMessages()
+                                    chatManager.markMessagesAsRead(from: contact.id)
+                                }
                             }
                             .contextMenu { Button("Usuń", role: .destructive) { if let idx = chatManager.contacts.firstIndex(where: { $0.id == contact.id }) { chatManager.removeContact(at: IndexSet(integer: idx)) } } }
                         }
                     }
-                    VStack(spacing: 12) {
-                        if isAddingContact {
-                            TextField("Nazwa", text: $newContactName).textFieldStyle(.roundedBorder)
-                            TextField("Token ID", text: $newContactToken).textFieldStyle(.roundedBorder)
-                            HStack {
-                                Button("Anuluj") { withAnimation { isAddingContact = false } }.buttonStyle(.plain).foregroundStyle(.red)
-                                Spacer(); Button("Zapisz") { if !newContactName.isEmpty && !newContactToken.isEmpty { chatManager.addContact(name: newContactName, tokenString: newContactToken); newContactName=""; newContactToken=""; withAnimation { isAddingContact = false } } }.buttonStyle(.borderedProminent)
-                            }
-                        } else {
-                            Button(action: { withAnimation { isAddingContact = true } }) { Label("Dodaj nowy kontakt", systemImage: "plus").frame(maxWidth: .infinity).padding(8).background(Color.gray.opacity(0.1)).cornerRadius(8) }.buttonStyle(.plain)
-                        }
-                    }.padding().background(Color.white.opacity(0.05)).cornerRadius(12).padding(.top, 10)
                 }.padding()
             }
         }
@@ -218,38 +328,73 @@ struct ContentView: View {
                                 
                                 MessageBubble(
                                     message: msg, isMe: msg.sender_id == chatManager.myID, isPreviousFromSameSender: isPrevSame, isNextFromSameSender: isNextSame, chatManager: chatManager,
-                                    onExpand: { if msg.id == chatManager.messages.last?.id { DispatchQueue.main.asyncAfter(deadline: .now()+0.1) { withAnimation { proxy.scrollTo(msg.id, anchor: .bottom) } } } },
+                                    onExpand: {
+                                        if msg.id == chatManager.messages.last?.id {
+                                            DispatchQueue.main.async {
+                                                withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                                                    proxy.scrollTo("bottomID", anchor: .bottom)
+                                                }
+                                            }
+                                        }
+                                    },
                                     onEdit: { messageToEdit=msg; editContent=msg.content; showEditAlert=true },
                                     onDelete: { if let id=msg.id { Task{await chatManager.deleteMessage(messageID: id)} } }
                                 ).id(msg.id)
                             }
-                            Color.clear.frame(height: 20)
                         }.padding(.horizontal)
+                        
+                        Color.clear
+                            .frame(height: 15)
+                            .id("bottomID")
                     }
                 }
-                .onChange(of: chatManager.messages) { if let last = chatManager.messages.last { withAnimation { proxy.scrollTo(last.id, anchor: .bottom) } } }
-                .onAppear { if let last = chatManager.messages.last { proxy.scrollTo(last.id, anchor: .bottom) }; isInputFocused = true }
+                .onChange(of: chatManager.messages) {
+                    let count = chatManager.messages.count
+                    guard let last = chatManager.messages.last else { return }
+                    
+                    if previousMessageCount == 0 || (count - previousMessageCount) > 1 {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                            proxy.scrollTo("bottomID", anchor: .bottom)
+                        }
+                    }
+                    else if count > previousMessageCount {
+                        if last.sender_id == chatManager.myID {
+                            withAnimation { proxy.scrollTo("bottomID", anchor: .bottom) }
+                        }
+                    }
+                    previousMessageCount = count
+                }
+                .onChange(of: chatManager.isLoading) {
+                    if !chatManager.isLoading {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                            proxy.scrollTo("bottomID", anchor: .bottom)
+                        }
+                    }
+                }
+                .onAppear {
+                    previousMessageCount = chatManager.messages.count
+                    DispatchQueue.main.async { proxy.scrollTo("bottomID", anchor: .bottom) }
+                    isInputFocused = true
+                }
             }
             if chatManager.typingUserID == contact.id { HStack { TypingIndicatorView(); Text("\(contact.name) pisze...").font(.caption).foregroundStyle(.secondary); Spacer() }.padding(.horizontal, 20).padding(.bottom, 4).transition(.opacity) }
             
-            // BRUDNOPIS
             if let fileName = pendingFileName {
                 HStack {
-                    Image(systemName: "doc.fill").foregroundStyle(.blue).font(.title2)
+                    Image(systemName: "doc.fill").foregroundStyle(Color(NSColor.controlAccentColor)).font(.title2)
                     VStack(alignment: .leading, spacing: 2) { Text("Plik gotowy do wysłania").font(.caption2).foregroundStyle(.secondary); Text(fileName).font(.subheadline).fontWeight(.medium).lineLimit(1) }
                     Spacer()
                     Button(action: { withAnimation { pendingFileData = nil; pendingFileName = nil } }) { Image(systemName: "xmark.circle.fill").foregroundStyle(.gray).font(.title3) }.buttonStyle(.plain)
-                }.padding(10).background(Color.blue.opacity(0.1)).cornerRadius(10).padding(.horizontal).padding(.bottom, 4).transition(.move(edge: .bottom).combined(with: .opacity))
+                }.padding(10).background(Color(NSColor.controlAccentColor).opacity(0.1)).cornerRadius(10).padding(.horizontal).padding(.bottom, 4).transition(.move(edge: .bottom).combined(with: .opacity))
             }
             
-            // INPUT
             HStack(spacing: 10) {
                 TextField("Napisz wiadomość...", text: $messageInput).textFieldStyle(.plain).focused($isInputFocused).foregroundStyle(.white).padding(10).background(Color.white.opacity(0.1)).clipShape(Capsule()).overlay(Capsule().stroke(Color.white.opacity(0.1), lineWidth: 1))
                     .onSubmit(sendMessage)
                     .onChange(of: messageInput) { if !messageInput.isEmpty { chatManager.sendTypingSignal() } }
                 Button(action: sendMessage) {
                     if isSendingFile { ProgressView().controlSize(.small).frame(width: 30, height: 30) }
-                    else { Image(systemName: pendingFileData != nil ? "arrow.up.doc.fill" : "arrow.up.circle.fill").resizable().frame(width: 30, height: 30).foregroundStyle((messageInput.isEmpty && pendingFileData == nil) ? Color.white.opacity(0.2) : Color.blue).background(Color.white.opacity(0.1)).clipShape(Circle()) }
+                    else { Image(systemName: pendingFileData != nil ? "square.and.arrow.up.circle.fill" : "arrow.up.circle.fill").resizable().frame(width: 30, height: 30).foregroundStyle((messageInput.isEmpty && pendingFileData == nil) ? Color.white.opacity(0.2) : Color(NSColor.controlAccentColor)).background(Color.white.opacity(0.1)).clipShape(Circle()) }
                 }.buttonStyle(.plain).disabled((messageInput.isEmpty && pendingFileData == nil) || isSendingFile)
             }.padding(12).background(.ultraThinMaterial)
         }
@@ -269,8 +414,6 @@ struct ContentView: View {
         Task { await chatManager.sendMessage(text) }
     }
 }
-
-// --- MESSAGE BUBBLE (POPRAWIONY STATUS) ---
 
 struct MessageBubble: View {
     let message: Message
@@ -295,11 +438,17 @@ struct MessageBubble: View {
                     Text("🚫 Wiadomość usunięta")
                         .font(.system(size: 13, weight: .light).italic())
                         .padding(.horizontal, 12).padding(.vertical, 8)
-                        .foregroundStyle(.white.opacity(0.6)).background(Color.gray.opacity(0.2)).clipShape(RoundedRectangle(cornerRadius: 12))
+                        .foregroundStyle(.white.opacity(0.6))
+                        .background(Color.gray.opacity(0.2))
+                        .clipShape(.rect(
+                            topLeadingRadius: (!isMe && isPreviousFromSameSender) ? 4 : 16,
+                            bottomLeadingRadius: (!isMe && isNextFromSameSender) ? 4 : 16,
+                            bottomTrailingRadius: (isMe && isNextFromSameSender) ? 4 : 16,
+                            topTrailingRadius: (isMe && isPreviousFromSameSender) ? 4 : 16
+                        ))
                 } else {
                     Group {
                         if message.type == "file", let fileName = message.file_name {
-                            // WIDOK PLIKU
                             VStack(alignment: .leading, spacing: 6) {
                                 HStack(spacing: 12) {
                                     ZStack {
@@ -312,14 +461,12 @@ struct MessageBubble: View {
                                     }
                                 }
                                 
-                                // LOGIKA AKCEPTACJI
-                                let status = message.file_status ?? "accepted" // Fallback dla starych
+                                let status = message.file_status ?? "accepted"
                                 
                                 if status == "pending" {
                                     if isMe {
                                         Text("Oczekuje na akceptację...").font(.caption2).italic().foregroundStyle(.white.opacity(0.6))
                                     } else {
-                                        // Odbiorca ma przyciski
                                         HStack {
                                             Button("Odrzuć") {
                                                 if let id = message.id { Task { await chatManager.respondToFile(messageID: id, accept: false) } }
@@ -335,7 +482,6 @@ struct MessageBubble: View {
                                 } else if status == "rejected" {
                                     Text("Transfer odrzucony").font(.caption).foregroundStyle(.red.opacity(0.8))
                                 } else {
-                                    // ACCEPTED -> Pokaż przycisk pobierania
                                     Button(action: { downloadAndOpenFile() }) {
                                         HStack {
                                             if isDownloading { ProgressView().controlSize(.small) }
@@ -351,30 +497,39 @@ struct MessageBubble: View {
                         } else {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(message.content)
-                                if message.edited_at != nil { Text("(edytowano)").font(.caption2).foregroundStyle(.white.opacity(0.6)).padding(.top, 2) }
                             }.padding(.horizontal, 12).padding(.vertical, 8)
                         }
                     }
-                    .foregroundStyle(.white)
-                    .background(isMe ? Color.blue : Color.white.opacity(0.15))
+                    .foregroundStyle(isMe ? Color(nsColor: .selectedControlTextColor) : .white)
+                    .background(isMe ? Color(nsColor: .controlAccentColor) : Color.white.opacity(0.15))
                     .brightness(showDetails ? -0.15 : 0)
                     .clipShape(.rect(
                         topLeadingRadius: (!isMe && isPreviousFromSameSender) ? 4 : 16,
-                        bottomLeadingRadius: (!isMe && isNextFromSameSender) ? 4 : (isMe ? 16 : 4),
-                        bottomTrailingRadius: (isMe && isNextFromSameSender) ? 4 : (isMe ? 4 : 16),
+                        bottomLeadingRadius: (!isMe && isNextFromSameSender) ? 4 : 16,
+                        bottomTrailingRadius: (isMe && isNextFromSameSender) ? 4 : 16,
                         topTrailingRadius: (isMe && isPreviousFromSameSender) ? 4 : 16
                     ))
                     .contentShape(Rectangle())
-                    .onTapGesture { withAnimation(.spring(response: 0.3)) { showDetails.toggle() }; if showDetails { onExpand?() } }
+                    .onTapGesture {
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) { showDetails.toggle() }
+                        if showDetails { onExpand?() }
+                    }
                     .contextMenu { if isMe { if message.type != "file" { Button { onEdit?() } label: { Label("Edytuj", systemImage: "pencil") } }; Button(role: .destructive) { onDelete?() } label: { Label("Usuń", systemImage: "trash") } } }
                 }
                 
                 if showDetails && message.is_deleted != true {
                     HStack(spacing: 4) {
                         if let d = message.created_at { Text(d.formatted(date: .omitted, time: .shortened)).font(.system(size: 9)).foregroundStyle(.white.opacity(0.5)) }
+                        
+                        if message.edited_at != nil {
+                            Text("• (edytowano)")
+                                .font(.system(size: 9))
+                                .foregroundStyle(.white.opacity(0.5))
+                        }
+                        
                         if isMe { Image(systemName: message.is_read == true ? "checkmark.circle.fill" : "checkmark.circle").font(.system(size: 10)).foregroundStyle(.white.opacity(message.is_read == true ? 0.8 : 0.4)) }
                     }
-                    .padding(.horizontal, 4).transition(.move(edge: .top).combined(with: .opacity))
+                    .padding(.horizontal, 4)
                 }
             }
             if !isMe { Spacer() }
@@ -400,6 +555,5 @@ struct MessageBubble: View {
     }
 }
 
-// Helpers DateHeader i TypingIndicator bez zmian...
 struct DateHeader: View { let date: Date; var body: some View { Text(formatDate(date)).font(.caption2).fontWeight(.medium).foregroundStyle(.white.opacity(0.6)).padding(.vertical, 4).padding(.horizontal, 12).background(Color.black.opacity(0.2)).clipShape(Capsule()).padding(.vertical, 4) }; private func formatDate(_ d: Date) -> String { let cal = Calendar.current; if cal.isDateInToday(d) { return "Dzisiaj" } else if cal.isDateInYesterday(d) { return "Wczoraj" } else { let f = DateFormatter(); f.dateStyle = .medium; f.timeStyle = .none; f.locale = Locale(identifier: "pl_PL"); return f.string(from: d) } } }
 struct TypingIndicatorView: View { @State private var dots = 3; @State private var anim = false; var body: some View { HStack(spacing: 4) { ForEach(0..<dots, id: \.self) { i in Circle().frame(width: 6, height: 6).foregroundStyle(.secondary).opacity(anim ? 0.3 : 1).scaleEffect(anim ? 0.8 : 1).animation(.easeInOut(duration: 0.6).repeatForever().delay(0.2 * Double(i)), value: anim) } }.onAppear { anim = true } } }

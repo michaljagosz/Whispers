@@ -6,6 +6,9 @@ struct MenuBarIconView: View {
     @State private var isTyping = false
     @State private var isReceivingFile = false
     
+    // Zmienna do manualnej animacji pulsowania
+    @State private var fileIconOpacity: Double = 1.0
+    
     var body: some View {
         ZStack {
             // 1. DOMYŚLNA IKONA (Baza)
@@ -14,29 +17,33 @@ struct MenuBarIconView: View {
                 .opacity((hasUnread || isTyping || isReceivingFile) ? 0 : 1) // Ukryj, jeśli jest inny stan
             
             // 2. NIEPRZECZYTANA WIADOMOŚĆ (Czerwona kropka)
-            // Pokazujemy tylko, jeśli nie ma ważniejszych stanów (pisanie/plik)
             if hasUnread && !isTyping && !isReceivingFile {
                 Image(systemName: "message.badge.filled.fill")
                     .font(.system(size: 14))
                     .symbolRenderingMode(.palette)
-                    .foregroundStyle(.red, .primary) // Czerwona kropka, systemowy dymek
+                    .foregroundStyle(.red, .primary)
                     .symbolEffect(.pulse, options: .repeating, isActive: true)
             }
             
-            // 3. KTOŚ PISZE (Fala - Variable Color)
-            // Ma wyższy priorytet niż zwykła kropka
+            // 3. KTOŚ PISZE (Fala)
             if isTyping && !isReceivingFile {
                 Image(systemName: "ellipsis.message.fill")
                     .font(.system(size: 14))
                     .symbolEffect(.variableColor.iterative, options: .repeating, isActive: true)
             }
             
-            // 4. PLIK OCZEKUJĄCY (Najwyższy priorytet - Pulse)
+            // 4. PLIK OCZEKUJĄCY (Naprawiona animacja pulsowania)
             if isReceivingFile {
                 Image(systemName: "arrow.down.message.fill")
                     .font(.system(size: 14))
                     .foregroundStyle(.primary)
-                    .symbolEffect(.pulse, options: .repeating, isActive: true)
+                    .opacity(fileIconOpacity) // Podpinamy przezroczystość
+                    .onAppear {
+                        // Start animacji pulsowania po pojawieniu się ikony
+                        withAnimation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true)) {
+                            fileIconOpacity = 0.3 // Pulsujemy do 30% widoczności
+                        }
+                    }
             }
         }
         // --- OBSŁUGA SYGNAŁÓW ---
@@ -46,7 +53,8 @@ struct MenuBarIconView: View {
         .onReceive(NotificationCenter.default.publisher(for: .messagesRead)) { _ in
             withAnimation {
                 hasUnread = false
-                isReceivingFile = false // Resetujemy też ikonę pliku po wejściu w czat
+                isReceivingFile = false
+                fileIconOpacity = 1.0 // Resetujemy stan animacji
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .typingStarted)) { _ in
@@ -56,6 +64,8 @@ struct MenuBarIconView: View {
             withAnimation { isTyping = false }
         }
         .onReceive(NotificationCenter.default.publisher(for: .incomingFile)) { _ in
+            // Resetujemy opacity przed startem, żeby animacja "zaskoczyła" od 1.0
+            fileIconOpacity = 1.0
             withAnimation { isReceivingFile = true }
         }
     }

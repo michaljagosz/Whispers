@@ -2,13 +2,12 @@ import SwiftUI
 import UserNotifications
 
 // --- CENTRALNA DEFINICJA POWIADOMIEŃ ---
-// Definiujemy to tylko tutaj, żeby uniknąć błędu "Redeclaration"
 extension Notification.Name {
     static let unreadMessage = Notification.Name("unreadMessage")
     static let messagesRead = Notification.Name("messagesRead")
     static let typingStarted = Notification.Name("typingStarted")
     static let typingEnded = Notification.Name("typingEnded")
-    static let incomingFile = Notification.Name("incomingFile") // <--- To jest ta nowa, której brakowało
+    static let incomingFile = Notification.Name("incomingFile")
 }
 
 @main
@@ -27,23 +26,28 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     var popover = NSPopover()
     var eventMonitor: Any?
     
+    // Tworzymy instancję managera tutaj, aby żyła przez cały czas działania aplikacji
+    var chatManager = ChatManager()
+    
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // A. Setup Widoku
-        let contentView = ContentView()
+        // Przekazujemy chatManager do ContentView
+        let contentView = ContentView(chatManager: chatManager)
+        
         popover.contentSize = NSSize(width: 340, height: 550)
         popover.behavior = .transient
         popover.contentViewController = NSHostingController(rootView: contentView)
         
-        // B. Setup Ikony
+        // Setup Ikony
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = statusItem?.button {
-            // Używamy naszego customowego widoku ikony
             let iconView = NSHostingView(rootView: MenuBarIconView())
-            iconView.frame = NSRect(x: 0, y: 0, width: 30, height: 22)
+            
+            // Poprawione marginesy (38px)
+            iconView.frame = NSRect(x: 0, y: 0, width: 38, height: 22)
+            
             button.subviews.forEach { $0.removeFromSuperview() }
             button.addSubview(iconView)
             
-            // Auto-layout dla ikony
             iconView.translatesAutoresizingMaskIntoConstraints = false
             NSLayoutConstraint.activate([
                 iconView.centerXAnchor.constraint(equalTo: button.centerXAnchor),
@@ -54,15 +58,20 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
             button.target = self
         }
         
-        // C. Powiadomienia Systemowe
+        // Powiadomienia Systemowe
         UNUserNotificationCenter.current().delegate = self
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in }
         
-        // D. Globalny Skrót
+        // Globalny Skrót
         setupGlobalShortcut()
     }
     
-    // Obsługa powiadomień gdy aplikacja jest aktywna
+    // NOWE: Obsługa zamykania aplikacji
+    func applicationWillTerminate(_ notification: Notification) {
+        print("🛑 Zamykanie aplikacji... Ustawianie statusu offline.")
+        chatManager.setOfflineStatus()
+    }
+    
     func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification, withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
         completionHandler([.banner, .sound, .list])
     }
