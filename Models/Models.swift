@@ -40,10 +40,10 @@ enum UserStatus: String, CaseIterable, Codable {
     
     var title: String {
         switch self {
-        case .online: return "Dostępny"
-        case .away: return "Zaraz wracam"
-        case .busy: return "Zajęty"
-        case .offline: return "Niedostępny"
+        case .online: return Strings.statusOnline
+        case .away: return Strings.statusAway
+        case .busy: return Strings.statusBusy
+        case .offline: return Strings.statusOffline
         }
     }
 }

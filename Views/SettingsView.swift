@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct SettingsView: View {
-    var chatManager: ChatManager // 🆕 Odbieramy managera
+    var chatManager: ChatManager
     
     @State private var launchManager = LaunchManager()
     @AppStorage("globalShortcut") private var selectedShortcut: String = "ctrl_opt_w"
@@ -9,6 +9,9 @@ struct SettingsView: View {
     // Lokalne stany dla edycji profilu
     @State private var editedName: String = ""
     @State private var isSaving: Bool = false
+    @State private var showCopyAlert = false
+    @State private var keyToImport: String = ""
+    @State private var showImportAlert = false
     
     var body: some View {
         TabView {
@@ -16,59 +19,118 @@ struct SettingsView: View {
                 // --- SEKCJA 1: PROFIL ---
                 Section {
                     HStack {
-                        TextField("Twoja nazwa", text: $editedName)
+                        TextField(Strings.yourName, text: $editedName)
                             .textFieldStyle(.roundedBorder)
                         
                         if isSaving {
                             ProgressView().controlSize(.small)
                         } else {
-                            Button("Zapisz") {
+                            Button(Strings.save) {
                                 saveName()
                             }
                             // Przycisk aktywny tylko gdy nazwa nie jest pusta i jest inna niż obecna
                             .disabled(editedName.isEmpty || editedName == chatManager.myUsername)
                         }
                     }
-                    Text("Ta nazwa będzie widoczna dla Twoich kontaktów.")
+                    Text(Strings.nameHint)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     
                 } header: {
-                    Text("Profil")
+                    Text(Strings.profileSection)
                 }
                 
                 // --- SEKCJA 2: SYSTEM ---
                 Section {
-                    Toggle("Uruchamiaj przy starcie systemu", isOn: $launchManager.isLaunchAtLoginEnabled)
+                    Toggle(Strings.launchAtLogin, isOn: $launchManager.isLaunchAtLoginEnabled)
                         .toggleStyle(.switch)
                 } header: {
-                    Text("System")
+                    Text(Strings.systemSection)
                 }
                 
                 // --- SEKCJA 3: KLAWIATURA ---
                 Section {
-                    Picker("Skrót wywołania:", selection: $selectedShortcut) {
+                    Picker(Strings.shortcutLabel, selection: $selectedShortcut) {
                         Text("⌃ + ⌥ + W").tag("ctrl_opt_w")
                         Text("⌃ + ⌥ + S").tag("ctrl_opt_s")
                         Text("⌘ + ⌃ + .").tag("cmd_ctrl_dot")
                     }
                     
-                    Text("Zmiana skrótu wymaga restartu aplikacji.")
+                    Text(Strings.shortcutHint)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 } header: {
-                    Text("Klawiatura")
+                    Text(Strings.keyboardSection)
+                }
+                
+                // --- SEKCJA 4: BEZPIECZEŃSTWO ---
+                Section {
+                    Button(Strings.exportKeyBtn) {
+                        if let key = CryptoManager.shared.exportPrivateKeyBase64() {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(key, forType: .string)
+                            showCopyAlert = true
+                        }
+                    }
+                    .foregroundStyle(.red) // Ostrzegawczy kolor
+                    .alert(Strings.keyCopiedTitle, isPresented: $showCopyAlert) {
+                        Button("OK", role: .cancel) { }
+                    } message: {
+                        Text(Strings.keyCopiedMsg)
+                    }
+                    
+//                    Text(Strings.keyWarning)
+//                        .font(.caption)
+//                        .foregroundStyle(.secondary)
+                    
+//                    Divider()
+                                        
+                    // 2. IMPORT (Nowość)
+                    VStack(alignment: .leading) {
+                        Text(Strings.importKeyTitle)
+                            .font(.caption).fontWeight(.bold)
+                        
+                        HStack {
+                            TextField(Strings.pasteKeyPlaceholder, text: $keyToImport)
+                                .textFieldStyle(.roundedBorder)
+                            
+                            Button(Strings.loadBtn) {
+                                if CryptoManager.shared.importPrivateKey(base64: keyToImport) {
+                                    showImportAlert = true
+                                    keyToImport = "" // Czyścimy pole dla bezpieczeństwa
+                                    
+                                    // Ważne: Po imporcie warto opublikować "nowy-stary" klucz publiczny ponownie,
+                                    // żeby upewnić się, że serwer ma aktualne dane.
+                                    Task {
+                                        await chatManager.initializeSession()
+                                    }
+                                }
+                            }
+                            .disabled(keyToImport.isEmpty)
+                        }
+                    }
+                    .padding(.vertical, 4)
+                    .alert(Strings.importSuccessTitle, isPresented: $showImportAlert) {
+                        Button("OK", role: .cancel) { }
+                    } message: {
+                        Text(Strings.importSuccessMsg)
+                    }
+
+                    Text(Strings.keyWarning)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } header: {
+                    Text(Strings.securitySection)
                 }
             }
             .formStyle(.grouped)
             .tabItem {
-                Label("Ogólne", systemImage: "gear")
+                Label(Strings.settingsGeneral, systemImage: "gear")
             }
             .padding()
         }
-        .frame(width: 450, height: 350) // Nieco większe okno, żeby wszystko się zmieściło
+        .frame(width: 450, height: 400) // Zwiększono wysokość, żeby zmieściła się sekcja bezpieczeństwa
         .onAppear {
-            // Wczytaj obecną nazwę z managera przy otwarciu okna
             editedName = chatManager.myUsername
         }
     }

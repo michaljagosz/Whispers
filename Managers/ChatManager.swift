@@ -29,6 +29,10 @@ class ChatManager {
     
     var unreadCounts: [UUID: Int] = [:]
     
+    // Paginacja
+    var canLoadMoreMessages: Bool = true
+    private let pageSize = 50
+    
     // Pisanie
     var typingUserID: UUID? = nil
     private var typingTask: Task<Void, Never>?
@@ -112,7 +116,7 @@ class ChatManager {
             setupRealtime()
             await checkInitialAlerts()
         } catch {
-            handleError(error, title: "Błąd autoryzacji")
+            handleError(error, title: Strings.authError)
         }
     }
     
@@ -175,7 +179,7 @@ class ChatManager {
         let uniquePath = "\(myID)/\(UUID().uuidString)_\(fileName)"
         do {
             try await client.storage.from("files").upload(uniquePath, data: data, options: FileOptions(upsert: false))
-            let msg = Message(id: nil, sender_id: myID, receiver_id: friendID, content: "Wysłano plik: \(fileName)", created_at: Date(), is_read: false, is_deleted: false, edited_at: nil, type: "file", file_path: uniquePath, file_name: fileName, file_size: Int64(data.count), file_status: "pending")
+            let msg = Message(id: nil, sender_id: myID, receiver_id: friendID, content: Strings.fileSentInfo(fileName), created_at: Date(), is_read: false, is_deleted: false, edited_at: nil, type: "file", file_path: uniquePath, file_name: fileName, file_size: Int64(data.count), file_status: "pending")
             try await client.database.from("messages").insert(msg).execute()
         } catch {
             handleError(error, title: "Nie udało się wysłać pliku")
@@ -248,15 +252,12 @@ class ChatManager {
                     }
                     
                     // 3. 🆕 SYNCHRONIZACJA NAZWY
-                    // Jeśli użytkownik ma ustawioną nazwę na serwerze...
                     if let serverName = profile.username, !serverName.isEmpty {
-                        // ...szukamy go w naszych lokalnych kontaktach
                         if let idx = self.contacts.firstIndex(where: { $0.id == profile.id }) {
-                            // Jeśli nazwa lokalna jest STARA (inna niż serwerowa) -> aktualizujemy
                             if self.contacts[idx].name != serverName {
                                 print("🔄 Aktualizacja nazwy kontaktu: \(self.contacts[idx].name) -> \(serverName)")
                                 self.contacts[idx].name = serverName
-                                self.saveContacts() // Zapisujemy zmianę w UserDefaults
+                                self.saveContacts()
                             }
                         }
                     }
@@ -301,7 +302,7 @@ class ChatManager {
             }
             print("✅ Zaktualizowano nazwę na: \(newName)")
         } catch {
-            handleError(error, title: "Nie udało się zmienić nazwy")
+            handleError(error, title: Strings.error)
         }
     }
     
@@ -316,7 +317,7 @@ class ChatManager {
                let decrypted = CryptoManager.shared.decrypt(base64Cipher: processed.content, senderPublicKeyBase64: key) {
                 processed.content = decrypted
             }
-            // W przeciwnym razie zostawiamy oryginał (dla starych wiadomości plain-text)
+            // W przeciwnym razie zostawiamy oryginał
         }
         return processed
     }
@@ -372,7 +373,6 @@ class ChatManager {
                                         }
                                         
                                         if message.sender_id != self.myID {
-                                            // 🎵 DŹWIĘK POWIADOMIENIA (Lokalny)
                                             NSSound(named: "Glass")?.play()
                                             
                                             if message.type == "file" && message.file_status == "pending" {
@@ -381,8 +381,8 @@ class ChatManager {
                                                 NotificationCenter.default.post(name: .unreadMessage, object: nil)
                                             }
                                             
-                                            let senderName = self.contacts.first(where: { $0.id == message.sender_id })?.name ?? "Ktoś"
-                                            let body = (message.type == "file") ? "Przesłał plik: \(message.file_name ?? "Dokument")" : message.content
+                                            let senderName = self.contacts.first(where: { $0.id == message.sender_id })?.name ?? Strings.someone
+                                            let body = (message.type == "file") ? Strings.fileSentInfo(message.file_name ?? "Dokument") : message.content
                                             self.sendSystemNotification(title: senderName, body: body)
                                         }
                                     }
@@ -405,7 +405,6 @@ class ChatManager {
                                 if let key = profile.public_key {
                                     self.friendPublicKeys[profile.id] = key
                                 }
-                                
                                 // 3. 🆕 NAZWA NA ŻYWO
                                 if let newName = profile.username, !newName.isEmpty {
                                     if let idx = self.contacts.firstIndex(where: { $0.id == profile.id }) {
@@ -446,24 +445,15 @@ class ChatManager {
     }
     
     private func handleTypingEvent(senderID: UUID) {
-        // Ignorujemy własne sygnały (dla pewności)
         if senderID == myID { return }
         
-        // Wszystkie zmiany UI muszą być na głównym wątku
         Task { @MainActor in
-            // 1. Ustawiamy, że ktoś pisze
             self.typingUserID = senderID
             NotificationCenter.default.post(name: .typingStarted, object: nil)
-            
-            // 2. Anulujemy poprzednie zadanie "czyszczenia" (jeśli istnieje)
-            // To zapobiega sytuacji, gdzie stary timer wyłącza status, gdy ktoś wciąż pisze
             self.typingTask?.cancel()
             
-            // 3. Uruchamiamy nowe zadanie z opóźnieniem (Debounce)
             self.typingTask = Task {
-                try? await Task.sleep(nanoseconds: 3 * 1_000_000_000) // Czekaj 3 sekundy
-                
-                // Jeśli zadanie nie zostało anulowane (czyli nie przyszedł nowy sygnał), czyścimy status
+                try? await Task.sleep(nanoseconds: 3 * 1_000_000_000)
                 if !Task.isCancelled {
                     self.typingUserID = nil
                     NotificationCenter.default.post(name: .typingEnded, object: nil)
@@ -483,24 +473,75 @@ class ChatManager {
         }
     }
     
+    // ✅ POPRAWIONA FUNKCJA Z PAGINACJĄ
     func fetchMessages() async {
         guard let friendID = currentContact?.id else { return }
-        await MainActor.run { self.isLoading = true }
+        await MainActor.run {
+            self.isLoading = true
+            self.messages = [] // Resetujemy przy wejściu
+            self.canLoadMoreMessages = true
+        }
+        
         do {
+            // Pobieramy OSTATNIE 50 wiadomości (sortujemy malejąco, potem odwracamy)
             let response: [Message] = try await client.database.from("messages")
                 .select()
                 .or("and(sender_id.eq.\(myID),receiver_id.eq.\(friendID)),and(sender_id.eq.\(friendID),receiver_id.eq.\(myID))")
-                .order("created_at", ascending: true)
+                .order("created_at", ascending: false) // Najpierw najnowsze
+                .limit(pageSize)
                 .execute()
                 .value
             
-            // 🔐 ODSZYFROWANIE HISTORII
             let decryptedMessages = response.map { self.processIncomingMessage($0) }
             
-            await MainActor.run { self.messages = decryptedMessages; self.isLoading = false }
+            await MainActor.run {
+                // Odwracamy kolejność, żeby były chronologicznie (stare -> nowe)
+                self.messages = decryptedMessages.reversed()
+                self.isLoading = false
+                // Jeśli pobraliśmy mniej niż limit, to znaczy, że nie ma więcej starszych
+                self.canLoadMoreMessages = response.count == pageSize
+            }
         } catch {
             await MainActor.run { self.isLoading = false }
             handleError(error, title: "Błąd pobierania wiadomości")
+        }
+    }
+    
+    // ✅ NOWA FUNKCJA: ŁADOWANIE STARSZYCH WIADOMOŚCI
+    func loadOlderMessages() async {
+        guard let friendID = currentContact?.id,
+              let oldestMessageDate = messages.first?.created_at,
+              canLoadMoreMessages,
+              !isLoading else { return }
+
+        await MainActor.run { self.isLoading = true }
+        
+        do {
+            // Formatowanie daty dla Supabase (ISO8601)
+            let isoDate = ISO8601DateFormatter().string(from: oldestMessageDate)
+            
+            let response: [Message] = try await client.database.from("messages")
+                .select()
+                .or("and(sender_id.eq.\(myID),receiver_id.eq.\(friendID)),and(sender_id.eq.\(friendID),receiver_id.eq.\(myID))")
+                .lt("created_at", value: isoDate) // "less than" - starsze niż najstarsza
+                .order("created_at", ascending: false)
+                .limit(pageSize)
+                .execute()
+                .value
+                
+            let decryptedOld = response.map { self.processIncomingMessage($0) }
+            
+            await MainActor.run {
+                if !decryptedOld.isEmpty {
+                    // Doklejamy stare na początek listy
+                    self.messages.insert(contentsOf: decryptedOld.reversed(), at: 0)
+                }
+                self.canLoadMoreMessages = response.count == pageSize
+                self.isLoading = false
+            }
+        } catch {
+            print("Błąd ładowania starszych: \(error)") // Cichy błąd, nie blokujemy UI
+            await MainActor.run { self.isLoading = false }
         }
     }
     
@@ -560,25 +601,21 @@ class ChatManager {
     
     // 🆕 INTELIGENTNE DODAWANIE KONTAKTU
     func addContact(tokenString: String) async {
-        // 1. Walidacja formatu UUID
         guard let uuid = UUID(uuidString: tokenString) else {
-            handleError(NSError(domain: "App", code: 1, userInfo: [NSLocalizedDescriptionKey: "Nieprawidłowy format Tokena ID"]), title: "Błąd dodawania")
+            handleError(NSError(domain: "App", code: 1, userInfo: [NSLocalizedDescriptionKey: Strings.invalidToken]), title: Strings.addBtn)
             return
         }
         
-        // 2. Walidacja: Czy nie dodajemy siebie?
         if uuid == myID {
-            handleError(NSError(domain: "App", code: 2, userInfo: [NSLocalizedDescriptionKey: "Nie możesz dodać samego siebie"]), title: "Błąd dodawania")
+            handleError(NSError(domain: "App", code: 2, userInfo: [NSLocalizedDescriptionKey: Strings.selfAddError]), title: Strings.addBtn)
             return
         }
         
-        // 3. Walidacja: Czy kontakt już istnieje?
         if contacts.contains(where: { $0.id == uuid }) {
-            handleError(NSError(domain: "App", code: 3, userInfo: [NSLocalizedDescriptionKey: "Ten kontakt jest już na liście"]), title: "Info")
+            handleError(NSError(domain: "App", code: 3, userInfo: [NSLocalizedDescriptionKey: Strings.contactExists]), title: "Info")
             return
         }
         
-        // 4. Pobranie danych z serwera
         do {
             let profile: Profile = try await client.database.from("profiles")
                 .select()
@@ -587,15 +624,12 @@ class ChatManager {
                 .execute()
                 .value
             
-            // Używamy nazwy z profilu, a jeśli jej nie ma - domyślnej "Użytkownik"
             let remoteName = profile.username ?? "Użytkownik"
             
             await MainActor.run {
-                // Dodajemy kontakt z nazwą pobraną z bazy
                 self.contacts.append(Contact(id: uuid, name: remoteName))
                 self.saveContacts()
                 
-                // Od razu pobieramy jego klucz publiczny i status
                 Task {
                     await self.fetchFriendStatuses()
                 }
@@ -615,9 +649,6 @@ class ChatManager {
         let content = UNMutableNotificationContent()
         content.title = title
         content.body = body
-        // 🔇 WYCISZAMY SYSTEMOWY DŹWIĘK (używamy własnego "Glass")
-        // content.sound = .default
-        
         UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil))
     }
 }

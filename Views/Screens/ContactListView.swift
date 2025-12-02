@@ -29,7 +29,7 @@ struct ContactListView: View {
             ScrollView {
                 VStack(spacing: 10) {
                     if filteredContacts.isEmpty && !searchText.isEmpty {
-                        Text("Nie znaleziono \"\(searchText)\"").foregroundStyle(.secondary).padding(.top, 20)
+                        Text(Strings.notFound(searchText)).foregroundStyle(.secondary).padding(.top, 20)
                     } else if chatManager.contacts.isEmpty && !isAddingContact {
                         emptyStateView
                     } else {
@@ -43,7 +43,7 @@ struct ContactListView: View {
     var searchAndAddBar: some View {
         HStack(spacing: 8) {
              Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-             TextField("Szukaj kontaktu...", text: $searchText).textFieldStyle(.plain)
+            TextField(Strings.searchPlaceholder, text: $searchText).textFieldStyle(.plain)
              if !searchText.isEmpty {
                  Button(action: { searchText = "" }) { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }.buttonStyle(.plain)
              }
@@ -54,7 +54,7 @@ struct ContactListView: View {
                      .foregroundStyle(isAddingContact ? .gray : .blue)
              }
              .buttonStyle(.plain)
-             .help("Dodaj nowy kontakt")
+             .help(Strings.addContactTooltip)
              
          }.padding(10).background(Color.white.opacity(0.1)).cornerRadius(8).padding(.horizontal).padding(.top, 10)
     }
@@ -65,13 +65,13 @@ struct ContactListView: View {
             // Usunięto pole "Nazwa"
             
             HStack {
-                TextField("Wklej Token ID znajomego", text: $newContactToken)
+                TextField(Strings.pasteTokenPlaceholder, text: $newContactToken)
                     .textFieldStyle(.roundedBorder)
                 
                 if isAdding {
                     ProgressView().controlSize(.small)
                 } else {
-                    Button("Dodaj") {
+                    Button(Strings.addBtn) {
                         if !newContactToken.isEmpty {
                             isAdding = true
                             Task {
@@ -89,7 +89,7 @@ struct ContactListView: View {
                     .disabled(newContactToken.isEmpty)
                 }
             }
-            Text("Nazwa kontaktu zostanie pobrana automatycznie.")
+            Text(Strings.contactAutoName)
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         }
@@ -103,8 +103,8 @@ struct ContactListView: View {
     var emptyStateView: some View {
         VStack(spacing: 15) {
             Image(systemName: "paperplane").font(.system(size: 40)).foregroundStyle(.gray.opacity(0.3))
-            Text("Nikogo tu jeszcze nie ma").foregroundStyle(.secondary)
-            Button("Dodaj kontakt") { withAnimation { isAddingContact = true } }
+            Text(Strings.noContactsTitle).foregroundStyle(.secondary)
+            Button(Strings.noContactsBtn) { withAnimation { isAddingContact = true } }
         }.padding(.top, 50)
     }
     
@@ -155,6 +155,6 @@ struct ContactRow: View {
         }
         .padding(10).background(Color.white.opacity(0.05)).cornerRadius(12).contentShape(Rectangle())
         .onTapGesture(perform: action)
-        .contextMenu { Button("Usuń", role: .destructive) { if let idx = chatManager.contacts.firstIndex(where: { $0.id == contact.id }) { chatManager.removeContact(at: IndexSet(integer: idx)) } } }
+        .contextMenu { Button(Strings.delete, role: .destructive) { if let idx = chatManager.contacts.firstIndex(where: { $0.id == contact.id }) { chatManager.removeContact(at: IndexSet(integer: idx)) } } }
     }
 }

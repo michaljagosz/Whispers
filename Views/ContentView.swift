@@ -69,14 +69,14 @@ struct ContentView: View {
         .background(.ultraThinMaterial)
         .animation(.default, value: chatManager.isConnected)
         .animation(.easeInOut, value: isDropTargeted)
-        .alert("Plik jest za duży", isPresented: $showFileAlert) {
-            Button("OK", role: .cancel) { }
+        .alert(Strings.fileTooLargeTitle, isPresented: $showFileAlert) {
+            Button(Strings.ok, role: .cancel) { }
         } message: {
-            Text("Maksymalny rozmiar pliku to 50 MB.")
+            Text(Strings.fileTooLargeMsg)
         }
         // 🆕 NOWY ALERT BŁĘDÓW OGÓLNYCH:
-        .alert("Wystąpił błąd", isPresented: $chatManager.showError) {
-            Button("OK", role: .cancel) { }
+        .alert(Strings.errorOccurred, isPresented: $chatManager.showError) {
+            Button(Strings.ok, role: .cancel) { }
         } message: {
             Text(chatManager.errorMessage)
         }
@@ -85,7 +85,7 @@ struct ContentView: View {
     var offlineBar: some View {
         HStack(spacing: 6) {
             Image(systemName: "wifi.slash")
-            Text("Brak połączenia")
+            Text(Strings.offlineBar)
         }
         .font(.caption).fontWeight(.medium).foregroundStyle(.white)
         .frame(maxWidth: .infinity).padding(.vertical, 6)
@@ -101,7 +101,7 @@ struct ContentView: View {
                 .padding(12)
             VStack {
                 Image(systemName: "arrow.down.doc.fill").font(.system(size: 50))
-                Text("Upuść plik tutaj").font(.title2).bold()
+                Text(Strings.dropZone).font(.title2).bold()
             }.foregroundStyle(Color.accentColor)
         }
         .allowsHitTesting(false)

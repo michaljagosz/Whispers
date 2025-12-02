@@ -1,0 +1,93 @@
+/* General */
+"app_name" = "Whispers";
+"cancel" = "Anuluj";
+"save" = "Zapisz";
+"ok" = "OK";
+"delete" = "Usuń";
+"edit" = "Edytuj";
+"error" = "Błąd";
+"loading" = "Wczytywanie...";
+
+/* User Status */
+"status_online" = "Dostępny";
+"status_away" = "Zaraz wracam";
+"status_busy" = "Zajęty";
+"status_offline" = "Niedostępny";
+
+/* Content View & Errors */
+"offline_bar" = "Brak połączenia";
+"drop_zone" = "Upuść plik tutaj";
+"file_too_large_title" = "Plik jest za duży";
+"file_too_large_msg" = "Maksymalny rozmiar pliku to 50 MB.";
+"error_occurred" = "Wystąpił błąd";
+
+/* Contact List */
+"search_placeholder" = "Szukaj kontaktu...";
+"add_contact_tooltip" = "Dodaj nowy kontakt";
+"paste_token_placeholder" = "Wklej Token ID znajomego";
+"add_btn" = "Dodaj";
+"contact_auto_name" = "Nazwa kontaktu zostanie pobrana automatycznie.";
+"no_contacts_title" = "Nikogo tu jeszcze nie ma";
+"no_contacts_btn" = "Dodaj kontakt";
+"not_found" = "Nie znaleziono";
+
+/* Chat View */
+"typing_suffix" = "pisze...";
+"file_ready" = "Plik gotowy do wysłania";
+"input_placeholder" = "Napisz wiadomość...";
+"edit_msg_title" = "Edytuj wiadomość";
+"msg_content" = "Treść";
+"loading_history" = "Wczytywanie historii...";
+
+/* Message Bubble */
+"msg_deleted" = "🚫 Wiadomość usunięta";
+"file_pending_me" = "Oczekuje na akceptację...";
+"btn_reject" = "Odrzuć";
+"btn_accept" = "Akceptuj";
+"file_rejected" = "Transfer odrzucony";
+"btn_open_file" = "Otwórz plik";
+"edited_tag" = "• (edytowano)";
+"file_sent_info" = "Wysłano plik: %@";
+
+/* Header & Menu */
+"messages_title" = "Wiadomości";
+"my_status" = "Mój status";
+"copy_id" = "Skopiuj moje ID";
+"quit_app" = "Zakończ aplikację";
+"verify_contact" = "Weryfikuj kontakt";
+"safety_number" = "Numer Bezpieczeństwa";
+"safety_alert_body" = "Porównaj ten numer z kontaktem, aby upewnić się, że połączenie jest szyfrowane i bezpieczne:\n\n%@";
+
+/* Settings */
+"settings_general" = "Ogólne";
+"profile_section" = "Profil";
+"your_name" = "Twoja nazwa";
+"name_hint" = "Ta nazwa będzie widoczna dla Twoich kontaktów.";
+"system_section" = "System";
+"launch_at_login" = "Uruchamiaj przy starcie systemu";
+"keyboard_section" = "Klawiatura";
+"shortcut_label" = "Skrót wywołania:";
+"shortcut_hint" = "Zmiana skrótu wymaga restartu aplikacji.";
+"security_section" = "Bezpieczeństwo";
+"export_key_btn" = "Eksportuj klucz prywatny";
+"import_key_title" = "Importuj klucz";
+"paste_key_placeholder" = "Wklej klucz tutaj...";
+"load_btn" = "Wczytaj";
+"import_success_title" = "Sukces";
+"import_success_msg" = "Klucz został zaimportowany. Twoja historia wiadomości powinna być teraz czytelna.";
+"key_warning" = "Ten klucz pozwala odszyfrować Twoje wiadomości. Nie udostępniaj go nikomu!";
+"key_copied_title" = "Skopiowano";
+"key_copied_msg" = "Klucz prywatny został skopiowany do schowka. Zapisz go w bezpiecznym miejscu (np. manager haseł).";
+
+/* Errors & Logic */
+"auth_error" = "Błąd autoryzacji";
+"send_file_error" = "Nie udało się wysłać pliku";
+"user_not_found" = "Nie znaleziono użytkownika";
+"invalid_token" = "Nieprawidłowy format Tokena ID";
+"self_add_error" = "Nie możesz dodać samego siebie";
+"contact_exists" = "Ten kontakt jest już na liście";
+"someone" = "Ktoś";
+
+/* Date */
+"today" = "Dzisiaj";
+"yesterday" = "Wczoraj";

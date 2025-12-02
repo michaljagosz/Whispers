@@ -1,5 +1,13 @@
 import SwiftUI
 
+// Pomocniczy klucz do wykrywania pozycji scrolla
+struct ViewOffsetKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value += nextValue()
+    }
+}
+
 struct ChatView: View {
     var contact: Contact
     var chatManager: ChatManager
@@ -25,7 +33,7 @@ struct ChatView: View {
             if chatManager.typingUserID == contact.id {
                 HStack {
                     TypingIndicatorView()
-                    Text("\(contact.name) pisze...").font(.caption).foregroundStyle(.secondary)
+                    Text("\(contact.name) \(Strings.typingSuffix)").font(.caption).foregroundStyle(.secondary)
                     Spacer()
                 }
                 .padding(.horizontal, 20).padding(.bottom, 4).transition(.opacity)
@@ -39,22 +47,39 @@ struct ChatView: View {
             // Pasek wpisywania
             inputBar
         }
-        .alert("Edytuj wiadomość", isPresented: $showEditAlert) {
-            TextField("Treść", text: $editContent)
-            Button("Zapisz") {
+        .alert(Strings.editMsgTitle, isPresented: $showEditAlert) {
+            TextField(Strings.msgContent, text: $editContent)
+            Button(Strings.save) {
                 if let msg = messageToEdit, let id = msg.id {
                     Task { await chatManager.editMessage(messageID: id, newContent: editContent) }
                 }
             }
-            Button("Anuluj", role: .cancel) { }
+            Button(Strings.cancel, role: .cancel) { }
         }
     }
     
     var messagesList: some View {
         ScrollViewReader { proxy in
             ScrollView {
+                // ✅ TRIGGER PAGINACJI NA GÓRZE
+                if chatManager.canLoadMoreMessages {
+                    GeometryReader { geo in
+                        Color.clear.preference(key: ViewOffsetKey.self, value: geo.frame(in: .global).minY)
+                    }
+                    .frame(height: 20)
+                    .onPreferenceChange(ViewOffsetKey.self) { value in
+                        if value > 0 { // Użytkownik przewinął na samą górę
+                            Task { await chatManager.loadOlderMessages() }
+                        }
+                    }
+                    
+                    if chatManager.isLoading {
+                        ProgressView().controlSize(.small).padding(5)
+                    }
+                }
+                
                 if chatManager.isLoading && chatManager.messages.isEmpty {
-                    VStack(spacing: 15) { Spacer().frame(height: 100); ProgressView().controlSize(.large); Text("Wczytywanie historii...").font(.caption).foregroundStyle(.secondary) }.frame(maxWidth: .infinity)
+                    VStack(spacing: 15) { Spacer().frame(height: 100); ProgressView().controlSize(.large); Text(Strings.loadingHistory).font(.caption).foregroundStyle(.secondary) }.frame(maxWidth: .infinity)
                 } else {
                     LazyVStack(spacing: 0) {
                         Color.clear.frame(height: 10)
@@ -98,10 +123,7 @@ struct ChatView: View {
                                     // Przewijanie na dół przy rozwinięciu ostatniej wiadomości
                                     if msg.id == chatManager.messages.last?.id {
                                         DispatchQueue.main.async {
-                                            withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                                                // Uwaga: upewnij się, że proxy jest dostępne w tym kontekście
-                                                // (powinno być, bo jesteśmy w ScrollViewReader)
-                                            }
+                                            // withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) { }
                                         }
                                     }
                                 },
@@ -128,7 +150,11 @@ struct ChatView: View {
                 let count = chatManager.messages.count
                 guard let last = chatManager.messages.last else { return }
                 if previousMessageCount == 0 || (count - previousMessageCount) > 1 {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { proxy.scrollTo("bottomID", anchor: .bottom) }
+                    // Nie scrollujemy na dół, jeśli załadowaliśmy stare wiadomości (czyli różnica > 1 i jesteśmy wysoko)
+                    // Ale scrollujemy, jeśli to pierwsze załadowanie (prev == 0)
+                     if previousMessageCount == 0 {
+                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { proxy.scrollTo("bottomID", anchor: .bottom) }
+                     }
                 } else if count > previousMessageCount {
                     if last.sender_id == chatManager.myID { withAnimation { proxy.scrollTo("bottomID", anchor: .bottom) } }
                 }
@@ -146,7 +172,7 @@ struct ChatView: View {
         HStack {
             Image(systemName: "doc.fill").foregroundStyle(Color.accentColor).font(.title2)
             VStack(alignment: .leading, spacing: 2) {
-                Text("Plik gotowy do wysłania").font(.caption2).foregroundStyle(.secondary)
+                Text(Strings.fileReady).font(.caption2).foregroundStyle(.secondary)
                 Text(fileName).font(.subheadline).fontWeight(.medium).lineLimit(1)
             }
             Spacer()
@@ -159,7 +185,7 @@ struct ChatView: View {
     
     var inputBar: some View {
         HStack(spacing: 10) {
-            TextField("Napisz wiadomość...", text: $messageInput)
+            TextField(Strings.inputPlaceholder, text: $messageInput)
                 .textFieldStyle(.plain)
                 .focused($isInputFocused)
                 .padding(10)

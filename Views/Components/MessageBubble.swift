@@ -20,7 +20,7 @@ struct MessageBubble: View {
             
             VStack(alignment: isMe ? .trailing : .leading, spacing: 4) {
                 if message.is_deleted == true {
-                    Text("🚫 Wiadomość usunięta")
+                    Text(Strings.msgDeleted)
                         .font(.system(size: 13, weight: .light).italic())
                         .padding(.horizontal, 12).padding(.vertical, 8)
                         .foregroundStyle(.white.opacity(0.6))
@@ -50,28 +50,28 @@ struct MessageBubble: View {
                                 
                                 if status == "pending" {
                                     if isMe {
-                                        Text("Oczekuje na akceptację...").font(.caption2).italic().foregroundStyle(.white.opacity(0.6))
+                                        Text(Strings.filePendingMe).font(.caption2).italic().foregroundStyle(.white.opacity(0.6))
                                     } else {
                                         HStack {
-                                            Button("Odrzuć") {
+                                            Button(Strings.btnReject) {
                                                 if let id = message.id { Task { await chatManager.respondToFile(messageID: id, accept: false) } }
                                             }
                                             .buttonStyle(.bordered).tint(.red).controlSize(.small)
                                             
-                                            Button("Akceptuj") {
+                                            Button(Strings.btnAccept) {
                                                 if let id = message.id { Task { await chatManager.respondToFile(messageID: id, accept: true) } }
                                             }
                                             .buttonStyle(.borderedProminent).tint(.green).controlSize(.small)
                                         }
                                     }
                                 } else if status == "rejected" {
-                                    Text("Transfer odrzucony").font(.caption).foregroundStyle(.red.opacity(0.8))
+                                    Text(Strings.fileRejected).font(.caption).foregroundStyle(.red.opacity(0.8))
                                 } else {
                                     Button(action: { downloadAndOpenFile() }) {
                                         HStack {
                                             if isDownloading { ProgressView().controlSize(.small) }
                                             else { Image(systemName: "arrow.down.circle.fill") }
-                                            Text("Otwórz plik").font(.caption).fontWeight(.medium)
+                                            Text(Strings.btnOpenFile).font(.caption).fontWeight(.medium)
                                         }
                                         .padding(.horizontal, 8).padding(.vertical, 4)
                                         .background(Color.black.opacity(0.2)).cornerRadius(8)
@@ -99,7 +99,7 @@ struct MessageBubble: View {
                         withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) { showDetails.toggle() }
                         if showDetails { onExpand?() }
                     }
-                    .contextMenu { if isMe { if message.type != "file" { Button { onEdit?() } label: { Label("Edytuj", systemImage: "pencil") } }; Button(role: .destructive) { onDelete?() } label: { Label("Usuń", systemImage: "trash") } } }
+                    .contextMenu { if isMe { if message.type != "file" { Button { onEdit?() } label: { Label(Strings.edit, systemImage: "pencil") } }; Button(role: .destructive) { onDelete?() } label: { Label(Strings.delete, systemImage: "trash") } } }
                 }
                 
                 if showDetails && message.is_deleted != true {
@@ -107,7 +107,7 @@ struct MessageBubble: View {
                         if let d = message.created_at { Text(d.formatted(date: .omitted, time: .shortened)).font(.system(size: 9)).foregroundStyle(.white.opacity(0.5)) }
                         
                         if message.edited_at != nil {
-                            Text("• (edytowano)")
+                            Text(Strings.editedTag)
                                 .font(.system(size: 9))
                                 .foregroundStyle(.white.opacity(0.5))
                         }
@@ -121,14 +121,26 @@ struct MessageBubble: View {
         }.padding(.bottom, isNextFromSameSender ? 2 : 10)
     }
     
+    // ✅ BEZPIECZNE POBIERANIE PLIKU
     func downloadAndOpenFile() {
-        guard let path = message.file_path, let name = message.file_name else { return }
+        guard let path = message.file_path, let originalName = message.file_name else { return }
         isDownloading = true
         Task {
             if let data = await chatManager.downloadFile(path: path) {
                 await MainActor.run {
-                    let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent(name)
-                    do { try data.write(to: tempURL); NSWorkspace.shared.open(tempURL) } catch { print("Błąd zapisu: \(error)") }
+                    // 1. Sanityzacja nazwy pliku (usuwanie znaków specjalnych ścieżki)
+                    let safeName = originalName.components(separatedBy: .init(charactersIn: "/\\?%*|\"<>:")).joined(separator: "_")
+                    
+                    // 2. Użycie katalogu tymczasowego
+                    let tempDir = FileManager.default.temporaryDirectory
+                    let fileURL = tempDir.appendingPathComponent(safeName)
+                    
+                    do {
+                        try data.write(to: fileURL)
+                        NSWorkspace.shared.open(fileURL)
+                    } catch {
+                        print("Błąd zapisu: \(error)")
+                    }
                     isDownloading = false
                 }
             } else { await MainActor.run { isDownloading = false } }

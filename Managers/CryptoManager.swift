@@ -18,6 +18,51 @@ class CryptoManager {
         return key.publicKey.rawRepresentation.base64EncodedString()
     }
     
+    // Eksport klucza prywatnego (do backupu)
+    func exportPrivateKeyBase64() -> String? {
+        guard let key = myPrivateKey else { return nil }
+        return key.rawRepresentation.base64EncodedString()
+    }
+    
+    // Import klucza prywatnego
+    func importPrivateKey(base64: String) -> Bool {
+        guard let data = Data(base64Encoded: base64),
+              let key = try? Curve25519.KeyAgreement.PrivateKey(rawRepresentation: data) else {
+            return false
+        }
+        self.myPrivateKey = key
+        saveKeyToKeychain(key: key)
+        return true
+    }
+    
+    // ✅ NOWE: Generowanie Numeru Bezpieczeństwa
+    // Łączy Twój klucz i klucz znajomego, sortuje je (żeby wynik był ten sam dla obu stron) i hashuje.
+    func generateSafetyNumber(friendPublicKeyBase64: String) -> String? {
+        guard let myKey = myPublicKeyBase64 else { return nil }
+        
+        // 1. Sortujemy klucze, aby obie strony (Ty i znajomy) uzyskały TEN SAM wynik
+        let keys = [myKey, friendPublicKeyBase64].sorted()
+        let combinedString = keys.joined()
+        
+        guard let data = combinedString.data(using: .utf8) else { return nil }
+        
+        // 2. Hashujemy SHA256
+        let hash = SHA256.hash(data: data)
+        
+        // 3. Konwertujemy pierwsze 5 bajtów na czytelny format (5 grup po 2 cyfry)
+        // Wynik np.: "84 12 09 44 21"
+        var numbers: [String] = []
+        // Konwersja hasha na tablicę bajtów
+        var byteIterator = hash.makeIterator()
+        for _ in 0..<5 {
+            if let byte = byteIterator.next() {
+                numbers.append(String(format: "%02d", byte))
+            }
+        }
+        
+        return numbers.joined(separator: " ")
+    }
+    
     // 2. Szyfrowanie wiadomości dla konkretnego odbiorcy
     func encrypt(text: String, receiverPublicKeyBase64: String) -> String? {
         guard let myPrivateKey = myPrivateKey,
