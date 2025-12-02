@@ -87,7 +87,11 @@
 "self_add_error" = "Nie możesz dodać samego siebie";
 "contact_exists" = "Ten kontakt jest już na liście";
 "someone" = "Ktoś";
+"fetch_error" = "Błąd pobierania danych";
+"send_error" = "Błąd wysyłania";
+"default_doc_name" = "Dokument";
 
 /* Date */
 "today" = "Dzisiaj";
 "yesterday" = "Wczoraj";
+

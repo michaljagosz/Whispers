@@ -182,7 +182,7 @@ class ChatManager {
             let msg = Message(id: nil, sender_id: myID, receiver_id: friendID, content: Strings.fileSentInfo(fileName), created_at: Date(), is_read: false, is_deleted: false, edited_at: nil, type: "file", file_path: uniquePath, file_name: fileName, file_size: Int64(data.count), file_status: "pending")
             try await client.database.from("messages").insert(msg).execute()
         } catch {
-            handleError(error, title: "Nie udało się wysłać pliku")
+            handleError(error, title: Strings.sendFileError)
         }
     }
     
@@ -382,7 +382,7 @@ class ChatManager {
                                             }
                                             
                                             let senderName = self.contacts.first(where: { $0.id == message.sender_id })?.name ?? Strings.someone
-                                            let body = (message.type == "file") ? Strings.fileSentInfo(message.file_name ?? "Dokument") : message.content
+                                            let body = (message.type == "file") ? Strings.fileSentInfo(message.file_name ?? Strings.defaultDocName) : message.content
                                             self.sendSystemNotification(title: senderName, body: body)
                                         }
                                     }
@@ -503,7 +503,7 @@ class ChatManager {
             }
         } catch {
             await MainActor.run { self.isLoading = false }
-            handleError(error, title: "Błąd pobierania wiadomości")
+            handleError(error, title: Strings.fetchError)
         }
     }
     
@@ -563,7 +563,7 @@ class ChatManager {
         do {
             try await client.database.from("messages").insert(msg).execute()
         } catch {
-            handleError(error, title: "Błąd wysyłania")
+            handleError(error, title: Strings.sendError)
         }
     }
     

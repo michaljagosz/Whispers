@@ -29,7 +29,7 @@ struct HeaderView: View {
                 .foregroundStyle(.secondary)
                 
                 VStack(alignment: .leading) {
-                    Text(chatManager.currentContact?.name ?? "Czat").font(.headline)
+                    Text(chatManager.currentContact?.name ?? Strings.messagesTitle).font(.headline)
                     if let contact = chatManager.currentContact, let status = chatManager.friendStatuses[contact.id] {
                         HStack(spacing: 4) {
                             Circle().fill(status.color).frame(width: 6, height: 6)

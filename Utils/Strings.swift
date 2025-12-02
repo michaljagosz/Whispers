@@ -91,6 +91,9 @@ struct Strings {
     static let selfAddError = String(localized: "self_add_error")
     static let contactExists = String(localized: "contact_exists")
     static let someone = String(localized: "someone")
+    static let fetchError = String(localized: "fetch_error")
+    static let sendError = String(localized: "send_error")
+    static let defaultDocName = String(localized: "default_doc_name")
     
     // Date
     static let today = String(localized: "today")
