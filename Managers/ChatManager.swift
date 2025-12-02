@@ -572,7 +572,7 @@ class ChatManager {
             try await client.database.from("messages").update(["is_deleted": true]).eq("id", value: messageID).execute()
             await MainActor.run { if let idx = messages.firstIndex(where: { $0.id == messageID }) { messages[idx].is_deleted = true } }
         } catch {
-            handleError(error, title: "Błąd usuwania wiadomości")
+            handleError(error, title: Strings.deleteMsgError)
         }
     }
     
@@ -586,7 +586,7 @@ class ChatManager {
                 }
             }
         } catch {
-            handleError(error, title: "Błąd edycji wiadomości")
+            handleError(error, title: Strings.editMsgError)
         }
     }
     
@@ -612,7 +612,7 @@ class ChatManager {
         }
         
         if contacts.contains(where: { $0.id == uuid }) {
-            handleError(NSError(domain: "App", code: 3, userInfo: [NSLocalizedDescriptionKey: Strings.contactExists]), title: "Info")
+            handleError(NSError(domain: "App", code: 3, userInfo: [NSLocalizedDescriptionKey: Strings.contactExists]), title: Strings.infoTitle)
             return
         }
         
@@ -637,7 +637,7 @@ class ChatManager {
             print("✅ Dodano kontakt: \(remoteName)")
             
         } catch {
-            handleError(error, title: "Nie znaleziono użytkownika")
+            handleError(error, title: Strings.userNotFound)
         }
     }
     

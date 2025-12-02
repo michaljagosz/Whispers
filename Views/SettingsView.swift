@@ -74,7 +74,7 @@ struct SettingsView: View {
                     }
                     .foregroundStyle(.red) // Ostrzegawczy kolor
                     .alert(Strings.keyCopiedTitle, isPresented: $showCopyAlert) {
-                        Button("OK", role: .cancel) { }
+                        Button(Strings.ok, role: .cancel) { }
                     } message: {
                         Text(Strings.keyCopiedMsg)
                     }
@@ -111,7 +111,7 @@ struct SettingsView: View {
                     }
                     .padding(.vertical, 4)
                     .alert(Strings.importSuccessTitle, isPresented: $showImportAlert) {
-                        Button("OK", role: .cancel) { }
+                        Button(Strings.ok, role: .cancel) { }
                     } message: {
                         Text(Strings.importSuccessMsg)
                     }

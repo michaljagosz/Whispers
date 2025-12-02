@@ -98,4 +98,9 @@ struct Strings {
     // Date
     static let today = String(localized: "today")
     static let yesterday = String(localized: "yesterday")
+    
+    static let deleteMsgError = String(localized: "delete_msg_error")
+    static let editMsgError = String(localized: "edit_msg_error")
+    static let infoTitle = String(localized: "info_title")
+    static func idPrefix(_ id: String) -> String { String(format: String(localized: "id_prefix"), id) }
 }

@@ -1,0 +1,101 @@
+/* General */
+"app_name" = "Whispers";
+"cancel" = "Cancel";
+"save" = "Save";
+"ok" = "OK";
+"delete" = "Delete";
+"edit" = "Edit";
+"error" = "Error";
+"loading" = "Loading…";
+"info_title" = "Info";
+
+/* User Status */
+"status_online" = "Online";
+"status_away" = "Away";
+"status_busy" = "Busy";
+"status_offline" = "Offline";
+
+/* Content View & Errors */
+"offline_bar" = "No connection";
+"drop_zone" = "Drop file here";
+"file_too_large_title" = "File too large";
+"file_too_large_msg" = "Maximum file size is 50 MB.";
+"error_occurred" = "Error occurred";
+
+/* Contact List */
+"search_placeholder" = "Search contact…";
+"add_contact_tooltip" = "Add new contact";
+"paste_token_placeholder" = "Paste Friend's Token ID";
+"add_btn" = "Add";
+"contact_auto_name" = "Contact name will be fetched automatically.";
+"no_contacts_title" = "No one here yet";
+"no_contacts_btn" = "Add contact";
+"not_found" = "Not found";
+
+/* Chat View */
+"typing_suffix" = "is typing…";
+"file_ready" = "File ready to send";
+"input_placeholder" = "Type a message…";
+"edit_msg_title" = "Edit message";
+"msg_content" = "Content";
+"loading_history" = "Loading history…";
+
+/* Message Bubble */
+"msg_deleted" = "🚫 Message deleted";
+"file_pending_me" = "Waiting for acceptance…";
+"btn_reject" = "Reject";
+"btn_accept" = "Accept";
+"file_rejected" = "Transfer rejected";
+"btn_open_file" = "Open file";
+"edited_tag" = "• (edited)";
+"file_sent_info" = "File sent: %@";
+
+/* Header & Menu */
+"messages_title" = "Messages";
+"my_status" = "My Status";
+"copy_id" = "Copy my ID";
+"quit_app" = "Quit App";
+"verify_contact" = "Verify Contact";
+"safety_number" = "Safety Number";
+"safety_alert_body" = "Compare this number with the contact to ensure the connection is encrypted and secure:\n\n%@";
+"id_prefix" = "ID: %@";
+
+/* Settings */
+"settings_general" = "General";
+"profile_section" = "Profile";
+"your_name" = "Your Name";
+"name_hint" = "This name will be visible to your contacts.";
+"system_section" = "System";
+"launch_at_login" = "Launch at login";
+"keyboard_section" = "Keyboard";
+"shortcut_label" = "Shortcut:";
+"shortcut_hint" = "Changing the shortcut requires restarting the app.";
+"security_section" = "Security";
+"export_key_btn" = "Export Private Key";
+"import_key_title" = "Import Key";
+"paste_key_placeholder" = "Paste key here…";
+"load_btn" = "Load";
+"import_success_title" = "Success";
+"import_success_msg" = "Key imported successfully. Your message history should now be readable.";
+"key_warning" = "This key allows decrypting your messages. Do not share it with anyone!";
+"key_copied_title" = "Copied";
+"key_copied_msg" = "Private key copied to clipboard. Save it in a secure place (e.g., password manager).";
+
+/* Errors & Logic */
+"auth_error" = "Authentication error";
+"send_file_error" = "Failed to send file";
+"user_not_found" = "User not found";
+"invalid_token" = "Invalid Token ID format";
+"self_add_error" = "You cannot add yourself";
+"contact_exists" = "Contact is already on the list";
+"someone" = "Someone";
+"fetch_error" = "Data fetch error";
+"send_error" = "Send error";
+"default_doc_name" = "Document";
+"delete_msg_error" = "Error deleting message";
+"edit_msg_error" = "Error editing message";
+
+/* Date */
+"today" = "Today";
+"yesterday" = "Yesterday";
+

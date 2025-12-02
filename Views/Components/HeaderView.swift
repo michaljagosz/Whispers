@@ -74,7 +74,7 @@ struct HeaderView: View {
                     
                     Divider()
                     
-                    Text("ID: ...\(chatManager.myID.uuidString.suffix(4))").font(.caption)
+                    Text("\(Strings.idPrefix)\(chatManager.myID.uuidString.prefix(4)) ...\(chatManager.myID.uuidString.suffix(4))").font(.caption)
                     Button(Strings.copyId) {
                         NSPasteboard.general.clearContents()
                         NSPasteboard.general.setString(chatManager.myID.uuidString, forType: .string)
