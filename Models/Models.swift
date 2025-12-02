@@ -20,8 +20,9 @@ struct Message: Codable, Identifiable, Equatable {
 struct Profile: Codable {
     let id: UUID
     var status: String?
+    var public_key: String?
+    var username: String?
 }
-
 enum UserStatus: String, CaseIterable, Codable {
     case online = "online"
     case away = "away"

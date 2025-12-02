@@ -16,7 +16,7 @@ struct MenuBarChatApp: App {
 
     var body: some Scene {
         Settings {
-            SettingsView()
+            SettingsView(chatManager: appDelegate.chatManager)
         }
     }
 }

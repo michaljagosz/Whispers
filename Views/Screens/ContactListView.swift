@@ -5,9 +5,10 @@ struct ContactListView: View {
     @Binding var searchText: String
     @Binding var isAddingContact: Bool
     
-    // Lokalne stany dla formularza
-    @State private var newContactName = ""
+    // 🆕 USUNIĘTO: @State private var newContactName = ""
+    // Zostało tylko to:
     @State private var newContactToken = ""
+    @State private var isAdding = false // Do pokazania kręciołka
     
     var filteredContacts: [Contact] {
         if searchText.isEmpty { return chatManager.contacts }
@@ -40,8 +41,6 @@ struct ContactListView: View {
     }
     
     var searchAndAddBar: some View {
-        // Skopiuj kod "HStack { Image(systemName: "magnifyingglass")... }" z Twojego ContentView
-        // Zastąp lokalne zmienne odpowiednimi bindingami
         HStack(spacing: 8) {
              Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
              TextField("Szukaj kontaktu...", text: $searchText).textFieldStyle(.plain)
@@ -60,23 +59,39 @@ struct ContactListView: View {
          }.padding(10).background(Color.white.opacity(0.1)).cornerRadius(8).padding(.horizontal).padding(.top, 10)
     }
     
+    // 🆕 ZMODYFIKOWANY FORMULARZ (Tylko Token)
     var addContactForm: some View {
         VStack(spacing: 10) {
-            TextField("Nazwa", text: $newContactName).textFieldStyle(.roundedBorder)
-            TextField("Token ID", text: $newContactToken).textFieldStyle(.roundedBorder)
+            // Usunięto pole "Nazwa"
+            
             HStack {
-                Spacer()
-                Button("Zapisz") {
-                    if !newContactName.isEmpty && !newContactToken.isEmpty {
-                        chatManager.addContact(name: newContactName, tokenString: newContactToken)
-                        newContactName = ""
-                        newContactToken = ""
-                        withAnimation { isAddingContact = false }
+                TextField("Wklej Token ID znajomego", text: $newContactToken)
+                    .textFieldStyle(.roundedBorder)
+                
+                if isAdding {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Button("Dodaj") {
+                        if !newContactToken.isEmpty {
+                            isAdding = true
+                            Task {
+                                await chatManager.addContact(tokenString: newContactToken)
+                                await MainActor.run {
+                                    newContactToken = ""
+                                    isAdding = false
+                                    withAnimation { isAddingContact = false }
+                                }
+                            }
+                        }
                     }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    .disabled(newContactToken.isEmpty)
                 }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.small)
             }
+            Text("Nazwa kontaktu zostanie pobrana automatycznie.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
         }
         .padding()
         .background(Color.white.opacity(0.05))
@@ -106,7 +121,7 @@ struct ContactListView: View {
     }
 }
 
-// Pomocniczy widok pojedynczego wiersza kontaktu (warto go też wyodrębnić)
+// ContactRow (bez zmian - skopiowany z poprzedniej wersji dla kompletności)
 struct ContactRow: View {
     let contact: Contact
     var chatManager: ChatManager
