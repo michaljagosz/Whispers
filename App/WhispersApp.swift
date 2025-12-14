@@ -31,6 +31,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Przekazujemy chatManager do ContentView (który teraz jest lżejszy i czytelniejszy!)
+        TempFileManager.shared.clearCache()
+        
         let contentView = ContentView(chatManager: chatManager)
         
         popover.contentSize = NSSize(width: 340, height: 550)
@@ -68,6 +70,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     
     func applicationWillTerminate(_ notification: Notification) {
         print("🛑 Zamykanie aplikacji... Ustawianie statusu offline.")
+        
+        TempFileManager.shared.clearCache()
+        
         chatManager.setOfflineStatus()
     }
     

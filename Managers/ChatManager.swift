@@ -102,7 +102,6 @@ class ChatManager {
             // 🔐 PUBLIKACJA MOJEGO KLUCZA PUBLICZNEGO
             if let myKey = CryptoManager.shared.myPublicKeyBase64 {
                 let updateData = ["public_key": myKey, "status": "online"]
-                // Upsert zapewnia, że profil istnieje
                 try? await client.database.from("profiles").upsert(["id": myID.uuidString]).execute()
                 try? await client.database.from("profiles").update(updateData).eq("id", value: myID).execute()
                 print("🔐 Klucz publiczny opublikowany.")
@@ -173,24 +172,64 @@ class ChatManager {
         try? await client.database.from("profiles").upsert(profile).execute()
     }
     
-    // --- PLIKI ---
+    // --- PLIKI (Z SZYFROWANIEM) ---
+    
     func sendFile(data: Data, fileName: String) async {
-        guard let friendID = currentContact?.id else { return }
+        guard let friendID = currentContact?.id,
+              let friendKey = friendPublicKeys[friendID] else {
+            handleError(NSError(domain: "Chat", code: 404, userInfo: [NSLocalizedDescriptionKey: "Brak klucza szyfrowania odbiorcy"]), title: Strings.sendError)
+            return
+        }
+        
+        // 🔒 1. Szyfrowanie pliku przed wysłaniem
+        guard let encryptedData = CryptoManager.shared.encryptData(data, receiverPublicKeyBase64: friendKey) else {
+            handleError(NSError(domain: "Chat", code: 500, userInfo: [NSLocalizedDescriptionKey: "Nie udało się zaszyfrować pliku"]), title: Strings.sendError)
+            return
+        }
+        
         let uniquePath = "\(myID)/\(UUID().uuidString)_\(fileName)"
         do {
-            try await client.storage.from("files").upload(uniquePath, data: data, options: FileOptions(upsert: false))
-            let msg = Message(id: nil, sender_id: myID, receiver_id: friendID, content: Strings.fileSentInfo(fileName), created_at: Date(), is_read: false, is_deleted: false, edited_at: nil, type: "file", file_path: uniquePath, file_name: fileName, file_size: Int64(data.count), file_status: "pending")
+            try await client.storage.from("files").upload(uniquePath, data: encryptedData, options: FileOptions(upsert: false))
+            
+            let msg = Message(
+                id: nil,
+                sender_id: myID,
+                receiver_id: friendID,
+                content: Strings.fileSentInfo(fileName),
+                created_at: Date(),
+                is_read: false,
+                is_deleted: false,
+                edited_at: nil,
+                type: "file",
+                file_path: uniquePath,
+                file_name: fileName,
+                file_size: Int64(encryptedData.count),
+                file_status: "pending"
+            )
             try await client.database.from("messages").insert(msg).execute()
         } catch {
             handleError(error, title: Strings.sendFileError)
         }
     }
     
-    func downloadFile(path: String) async -> Data? {
+    func downloadFile(message: Message) async -> Data? {
+        guard let path = message.file_path else { return nil }
+        
         do {
-            let data = try await client.storage.from("files").download(path: path)
+            // 1. Pobieramy zaszyfrowane dane
+            let encryptedData = try await client.storage.from("files").download(path: path)
             await deleteFileFromStorage(path: path)
-            return data
+            
+            // 2. Ustalamy czyj klucz jest potrzebny do odszyfrowania
+            let otherUserID = (message.sender_id == myID) ? message.receiver_id : message.sender_id
+            
+            guard let key = friendPublicKeys[otherUserID] else {
+                print("⚠️ Brak klucza publicznego użytkownika do odszyfrowania pliku.")
+                return nil
+            }
+            
+            // 🔓 3. Odszyfrowanie
+            return CryptoManager.shared.decryptData(encryptedData, otherPartyPublicKeyBase64: key)
         }
         catch { return nil }
     }
@@ -242,20 +281,15 @@ class ChatManager {
             
             await MainActor.run {
                 for profile in profiles {
-                    // 1. Status
                     if let s = profile.status, let st = UserStatus(rawValue: s) {
                         self.friendStatuses[profile.id] = st
                     }
-                    // 2. Klucz publiczny
                     if let key = profile.public_key {
                         self.friendPublicKeys[profile.id] = key
                     }
-                    
-                    // 3. 🆕 SYNCHRONIZACJA NAZWY
                     if let serverName = profile.username, !serverName.isEmpty {
                         if let idx = self.contacts.firstIndex(where: { $0.id == profile.id }) {
                             if self.contacts[idx].name != serverName {
-                                print("🔄 Aktualizacja nazwy kontaktu: \(self.contacts[idx].name) -> \(serverName)")
                                 self.contacts[idx].name = serverName
                                 self.saveContacts()
                             }
@@ -268,7 +302,6 @@ class ChatManager {
         }
     }
     
-    // 🆕 Pobieranie mojego profilu z bazy
     func fetchMyProfile() async {
         do {
             let profile: Profile = try await client.database.from("profiles")
@@ -289,7 +322,6 @@ class ChatManager {
         }
     }
 
-    // 🆕 Aktualizacja nazwy w bazie
     func updateMyName(to newName: String) async {
         do {
             try await client.database.from("profiles")
@@ -300,16 +332,13 @@ class ChatManager {
             await MainActor.run {
                 self.myUsername = newName
             }
-            print("✅ Zaktualizowano nazwę na: \(newName)")
         } catch {
             handleError(error, title: Strings.error)
         }
     }
     
-    // 🔐 FUNKCJA ODSZYFROWUJĄCA (CZYSTA WERSJA)
     private func processIncomingMessage(_ msg: Message) -> Message {
         var processed = msg
-        // Próbujemy odszyfrować tylko wiadomości tekstowe
         if processed.type == "text" {
             let otherUserID = (processed.sender_id == myID) ? processed.receiver_id : processed.sender_id
             
@@ -317,7 +346,6 @@ class ChatManager {
                let decrypted = CryptoManager.shared.decrypt(base64Cipher: processed.content, senderPublicKeyBase64: key) {
                 processed.content = decrypted
             }
-            // W przeciwnym razie zostawiamy oryginał
         }
         return processed
     }
@@ -347,7 +375,6 @@ class ChatManager {
                         }
                         
                         if let rawMessage = incomingMessage {
-                            // 🔐 ODSZYFROWANIE W LOCIE
                             let message = self.processIncomingMessage(rawMessage)
                             
                             if message.sender_id != self.myID && message.is_read == false {
@@ -357,10 +384,20 @@ class ChatManager {
                             }
                             
                             if (message.receiver_id == self.myID || message.sender_id == self.myID) {
-                                DispatchQueue.main.async {
+                                await MainActor.run {
+                                    // 1. Aktualizacja istniejącej
                                     if let index = self.messages.firstIndex(where: { $0.id == message.id }) {
                                         self.messages[index] = message
-                                    } else if !self.messages.contains(where: { $0.id == message.id }) {
+                                    }
+                                    // 2. DEDUPLIKACJA OPTIMISTIC UI:
+                                    else if message.sender_id == self.myID,
+                                            let localIndex = self.messages.firstIndex(where: { $0.id == nil && $0.status != .error }) {
+                                        // Zakładamy, że pierwsza lokalna "sending" to ta, która właśnie weszła
+                                        self.messages[localIndex] = message
+                                        self.messages[localIndex].status = .sent
+                                    }
+                                    // 3. Nowa wiadomość
+                                    else if !self.messages.contains(where: { $0.id == message.id }) {
                                         if message.sender_id == self.typingUserID {
                                             self.typingUserID = nil
                                             self.typingTask?.cancel()
@@ -374,13 +411,11 @@ class ChatManager {
                                         
                                         if message.sender_id != self.myID {
                                             NSSound(named: "Glass")?.play()
-                                            
                                             if message.type == "file" && message.file_status == "pending" {
                                                 NotificationCenter.default.post(name: .incomingFile, object: nil)
                                             } else {
                                                 NotificationCenter.default.post(name: .unreadMessage, object: nil)
                                             }
-                                            
                                             let senderName = self.contacts.first(where: { $0.id == message.sender_id })?.name ?? Strings.someone
                                             let body = (message.type == "file") ? Strings.fileSentInfo(message.file_name ?? Strings.defaultDocName) : message.content
                                             self.sendSystemNotification(title: senderName, body: body)
@@ -392,26 +427,22 @@ class ChatManager {
                     }
                 }
                 
-                // WĄTEK B: STATUSY I PROFILE
+                // WĄTEK B: PROFILE
                 group.addTask {
                     for await change in profileStream {
                         if let profile = try? change.record.decode(as: Profile.self) {
                             await MainActor.run {
-                                // 1. Status
                                 if let s = profile.status, let ns = UserStatus(rawValue: s) {
                                     self.friendStatuses[profile.id] = ns
                                 }
-                                // 2. Klucz
                                 if let key = profile.public_key {
                                     self.friendPublicKeys[profile.id] = key
                                 }
-                                // 3. 🆕 NAZWA NA ŻYWO
                                 if let newName = profile.username, !newName.isEmpty {
                                     if let idx = self.contacts.firstIndex(where: { $0.id == profile.id }) {
                                         if self.contacts[idx].name != newName {
                                             self.contacts[idx].name = newName
                                             self.saveContacts()
-                                            print("⚡️ Realtime: Zmieniono nazwę kontaktu na \(newName)")
                                         }
                                     }
                                 }
@@ -424,10 +455,7 @@ class ChatManager {
                 group.addTask {
                     let encoder = JSONEncoder()
                     let decoder = JSONDecoder()
-                    
-                    struct BroadcastWrapper: Decodable {
-                        let payload: TypingEvent
-                    }
+                    struct BroadcastWrapper: Decodable { let payload: TypingEvent }
                     
                     for await event in broadcastStream {
                         if let data = try? encoder.encode(event) {
@@ -446,7 +474,6 @@ class ChatManager {
     
     private func handleTypingEvent(senderID: UUID) {
         if senderID == myID { return }
-        
         Task { @MainActor in
             self.typingUserID = senderID
             NotificationCenter.default.post(name: .typingStarted, object: nil)
@@ -473,21 +500,19 @@ class ChatManager {
         }
     }
     
-    // ✅ POPRAWIONA FUNKCJA Z PAGINACJĄ
     func fetchMessages() async {
         guard let friendID = currentContact?.id else { return }
         await MainActor.run {
             self.isLoading = true
-            self.messages = [] // Resetujemy przy wejściu
+            self.messages = []
             self.canLoadMoreMessages = true
         }
         
         do {
-            // Pobieramy OSTATNIE 50 wiadomości (sortujemy malejąco, potem odwracamy)
             let response: [Message] = try await client.database.from("messages")
                 .select()
                 .or("and(sender_id.eq.\(myID),receiver_id.eq.\(friendID)),and(sender_id.eq.\(friendID),receiver_id.eq.\(myID))")
-                .order("created_at", ascending: false) // Najpierw najnowsze
+                .order("created_at", ascending: false)
                 .limit(pageSize)
                 .execute()
                 .value
@@ -495,10 +520,8 @@ class ChatManager {
             let decryptedMessages = response.map { self.processIncomingMessage($0) }
             
             await MainActor.run {
-                // Odwracamy kolejność, żeby były chronologicznie (stare -> nowe)
                 self.messages = decryptedMessages.reversed()
                 self.isLoading = false
-                // Jeśli pobraliśmy mniej niż limit, to znaczy, że nie ma więcej starszych
                 self.canLoadMoreMessages = response.count == pageSize
             }
         } catch {
@@ -507,7 +530,6 @@ class ChatManager {
         }
     }
     
-    // ✅ NOWA FUNKCJA: ŁADOWANIE STARSZYCH WIADOMOŚCI
     func loadOlderMessages() async {
         guard let friendID = currentContact?.id,
               let oldestMessageDate = messages.first?.created_at,
@@ -517,13 +539,12 @@ class ChatManager {
         await MainActor.run { self.isLoading = true }
         
         do {
-            // Formatowanie daty dla Supabase (ISO8601)
             let isoDate = ISO8601DateFormatter().string(from: oldestMessageDate)
             
             let response: [Message] = try await client.database.from("messages")
                 .select()
                 .or("and(sender_id.eq.\(myID),receiver_id.eq.\(friendID)),and(sender_id.eq.\(friendID),receiver_id.eq.\(myID))")
-                .lt("created_at", value: isoDate) // "less than" - starsze niż najstarsza
+                .lt("created_at", value: isoDate)
                 .order("created_at", ascending: false)
                 .limit(pageSize)
                 .execute()
@@ -533,38 +554,78 @@ class ChatManager {
             
             await MainActor.run {
                 if !decryptedOld.isEmpty {
-                    // Doklejamy stare na początek listy
                     self.messages.insert(contentsOf: decryptedOld.reversed(), at: 0)
                 }
                 self.canLoadMoreMessages = response.count == pageSize
                 self.isLoading = false
             }
         } catch {
-            print("Błąd ładowania starszych: \(error)") // Cichy błąd, nie blokujemy UI
+            print("Błąd ładowania starszych: \(error)")
             await MainActor.run { self.isLoading = false }
         }
     }
     
+    // --- OPTIMISTIC UI SENDING ---
     func sendMessage(_ text: String) async {
         guard let friendID = currentContact?.id else { return }
         
+        // 1. Szyfrowanie
         var contentToSend = text
-        // 🔐 SZYFROWANIE
         if let friendKey = friendPublicKeys[friendID],
            let encrypted = CryptoManager.shared.encrypt(text: text, receiverPublicKeyBase64: friendKey) {
             contentToSend = encrypted
-            print("🔒 Wiadomość zaszyfrowana przed wysłaniem.")
-        } else {
-            print("⚠️ Brak klucza znajomego - wysyłam jawnym tekstem.")
         }
         
-        let msg = Message(id: nil, sender_id: myID, receiver_id: friendID, content: contentToSend, created_at: Date(), is_read: false, is_deleted: false, edited_at: nil, type: "text")
+        // 2. Wiadomość Lokalna (Optimistic)
+        let tempID = UUID()
+        var localMsg = Message(
+            id: nil,
+            sender_id: myID,
+            receiver_id: friendID,
+            content: contentToSend,
+            created_at: Date(),
+            is_read: false,
+            is_deleted: false,
+            edited_at: nil,
+            type: "text",
+            status: .sending,
+            localID: tempID
+        )
+        localMsg.content = text // Pokazujemy tekst jawny lokalnie
+        
+        await MainActor.run { self.messages.append(localMsg) }
         
         do {
-            try await client.database.from("messages").insert(msg).execute()
+            var msgToSend = localMsg
+            msgToSend.content = contentToSend
+            msgToSend.status = nil
+            msgToSend.localID = nil
+            
+            try await client.database.from("messages").insert(msgToSend).execute()
+            
+            // Sukces: Realtime podmieni wiadomość na tę z bazy (setupRealtime)
+            await MainActor.run {
+                if let index = self.messages.firstIndex(where: { $0.localID == tempID }) {
+                    self.messages[index].status = .sent
+                }
+            }
         } catch {
-            handleError(error, title: Strings.sendError)
+            print("❌ Błąd wysyłania: \(error)")
+            await MainActor.run {
+                if let index = self.messages.firstIndex(where: { $0.localID == tempID }) {
+                    self.messages[index].status = .error
+                }
+            }
         }
+    }
+    
+    func retryMessage(_ localMsg: Message) async {
+        guard let index = messages.firstIndex(where: { $0.localID == localMsg.localID }),
+              localMsg.status == .error else { return }
+        
+        let textContent = localMsg.content
+        await MainActor.run { messages.remove(at: index) }
+        await sendMessage(textContent)
     }
     
     func deleteMessage(messageID: Int) async {
@@ -599,7 +660,6 @@ class ChatManager {
         }
     }
     
-    // 🆕 INTELIGENTNE DODAWANIE KONTAKTU
     func addContact(tokenString: String) async {
         guard let uuid = UUID(uuidString: tokenString) else {
             handleError(NSError(domain: "App", code: 1, userInfo: [NSLocalizedDescriptionKey: Strings.invalidToken]), title: Strings.addBtn)
@@ -629,12 +689,8 @@ class ChatManager {
             await MainActor.run {
                 self.contacts.append(Contact(id: uuid, name: remoteName))
                 self.saveContacts()
-                
-                Task {
-                    await self.fetchFriendStatuses()
-                }
+                Task { await self.fetchFriendStatuses() }
             }
-            print("✅ Dodano kontakt: \(remoteName)")
             
         } catch {
             handleError(error, title: Strings.userNotFound)

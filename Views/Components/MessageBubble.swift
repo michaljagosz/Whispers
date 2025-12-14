@@ -16,7 +16,22 @@ struct MessageBubble: View {
     
     var body: some View {
         HStack(alignment: .bottom, spacing: 8) {
-            if isMe { Spacer() }
+            // IKONY STATUSU (tylko dla mnie)
+            if isMe {
+                if message.status == .sending {
+                    ProgressView().controlSize(.small).frame(width: 12, height: 12)
+                } else if message.status == .error {
+                    Button(action: {
+                        Task { await chatManager.retryMessage(message) }
+                    }) {
+                        Image(systemName: "exclamationmark.circle.fill")
+                            .foregroundStyle(.red)
+                            .help("Wystąpił błąd. Kliknij, aby ponowić.")
+                    }
+                    .buttonStyle(.plain)
+                }
+                Spacer()
+            }
             
             VStack(alignment: isMe ? .trailing : .leading, spacing: 4) {
                 if message.is_deleted == true {
@@ -117,23 +132,22 @@ struct MessageBubble: View {
                     .padding(.horizontal, 4)
                 }
             }
+            // Zmiana przezroczystości dla wysyłanych
+            .opacity(message.status == .sending ? 0.7 : 1.0)
+            
             if !isMe { Spacer() }
         }.padding(.bottom, isNextFromSameSender ? 2 : 10)
     }
     
-    // ✅ BEZPIECZNE POBIERANIE PLIKU
+    // ✅ BEZPIECZNE POBIERANIE Z TempFileManager
     func downloadAndOpenFile() {
-        guard let path = message.file_path, let originalName = message.file_name else { return }
+        guard let originalName = message.file_name else { return }
         isDownloading = true
         Task {
-            if let data = await chatManager.downloadFile(path: path) {
+            if let data = await chatManager.downloadFile(message: message) {
                 await MainActor.run {
-                    // 1. Sanityzacja nazwy pliku (usuwanie znaków specjalnych ścieżki)
-                    let safeName = originalName.components(separatedBy: .init(charactersIn: "/\\?%*|\"<>:")).joined(separator: "_")
-                    
-                    // 2. Użycie katalogu tymczasowego
-                    let tempDir = FileManager.default.temporaryDirectory
-                    let fileURL = tempDir.appendingPathComponent(safeName)
+                    // Użycie managera plików tymczasowych
+                    let fileURL = TempFileManager.shared.getUniqueFileURL(fileName: originalName)
                     
                     do {
                         try data.write(to: fileURL)

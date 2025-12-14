@@ -156,4 +156,64 @@ class CryptoManager {
         let status = SecItemCopyMatching(query as CFDictionary, &dataTypeRef)
         return status == errSecSuccess ? (dataTypeRef as? Data) : nil
     }
+    
+    // W CryptoManager.swift
+
+    // 4. Szyfrowanie DANYCH (plików)
+    func encryptData(_ data: Data, receiverPublicKeyBase64: String) -> Data? {
+        guard let myPrivateKey = myPrivateKey,
+              let receiverKeyData = Data(base64Encoded: receiverPublicKeyBase64),
+              let receiverPublicKey = try? Curve25519.KeyAgreement.PublicKey(rawRepresentation: receiverKeyData) else {
+            return nil
+        }
+        
+        // Generujemy wspólny sekret
+        let sharedSecret = try? myPrivateKey.sharedSecretFromKeyAgreement(with: receiverPublicKey)
+        let symmetricKey = sharedSecret?.hkdfDerivedSymmetricKey(
+            using: SHA256.self,
+            salt: Data(),
+            sharedInfo: Data(),
+            outputByteCount: 32
+        )
+        
+        guard let key = symmetricKey else { return nil }
+        
+        do {
+            // Szyfrujemy surowe bajty
+            let sealedBox = try AES.GCM.seal(data, using: key)
+            return sealedBox.combined // Zwracamy Data (nonce + ciphertext + tag)
+        } catch {
+            print("❌ Błąd szyfrowania pliku: \(error)")
+            return nil
+        }
+    }
+
+    // 5. Odszyfrowywanie DANYCH (plików)
+    func decryptData(_ data: Data, otherPartyPublicKeyBase64: String) -> Data? {
+        guard let myPrivateKey = myPrivateKey,
+              let otherKeyData = Data(base64Encoded: otherPartyPublicKeyBase64),
+              let otherPublicKey = try? Curve25519.KeyAgreement.PublicKey(rawRepresentation: otherKeyData) else {
+            return nil
+        }
+        
+        let sharedSecret = try? myPrivateKey.sharedSecretFromKeyAgreement(with: otherPublicKey)
+        let symmetricKey = sharedSecret?.hkdfDerivedSymmetricKey(
+            using: SHA256.self,
+            salt: Data(),
+            sharedInfo: Data(),
+            outputByteCount: 32
+        )
+        
+        guard let key = symmetricKey else { return nil }
+        
+        do {
+            let sealedBox = try AES.GCM.SealedBox(combined: data)
+            let decryptedData = try AES.GCM.open(sealedBox, using: key)
+            return decryptedData
+        } catch {
+            print("❌ Błąd odszyfrowania pliku: \(error)")
+            return nil
+        }
+    }
 }
+

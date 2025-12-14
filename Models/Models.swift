@@ -1,6 +1,12 @@
 import Foundation
 import SwiftUI
 
+enum MessageStatus: String, Codable {
+    case sent       // Domyślny (z serwera)
+    case sending    // Lokalny: Trwa wysyłanie
+    case error      // Lokalny: Błąd wysyłania
+}
+
 struct Message: Codable, Identifiable, Equatable {
     var id: Int?
     let sender_id: UUID
@@ -15,6 +21,8 @@ struct Message: Codable, Identifiable, Equatable {
     var file_name: String?
     var file_size: Int64?
     var file_status: String?
+    var status: MessageStatus? = .sent
+    var localID: UUID? = nil
 }
 
 struct Profile: Codable {

@@ -97,7 +97,7 @@ struct ChatView: View {
                                 DateHeader(date: date)
                             }
                             
-                            // 3. Logika grupowania dymków (Czy poprzedni/następny jest od tego samego nadawcy?)
+                            // 3. Logika grupowania dymków
                             let isPrevSame: Bool = {
                                 if index == 0 || showDateHeader { return false }
                                 return chatManager.messages[index-1].sender_id == msg.sender_id
@@ -107,7 +107,6 @@ struct ChatView: View {
                                 if index >= chatManager.messages.count - 1 { return false }
                                 guard let current = msg.created_at,
                                       let next = chatManager.messages[index+1].created_at else { return false }
-                                // Jeśli następna wiadomość jest innego dnia, to nie grupujemy
                                 if !Calendar.current.isDate(current, inSameDayAs: next) { return false }
                                 return chatManager.messages[index+1].sender_id == msg.sender_id
                             }()
@@ -120,10 +119,9 @@ struct ChatView: View {
                                 isNextFromSameSender: isNextSame,
                                 chatManager: chatManager,
                                 onExpand: {
-                                    // Przewijanie na dół przy rozwinięciu ostatniej wiadomości
                                     if msg.id == chatManager.messages.last?.id {
                                         DispatchQueue.main.async {
-                                            // withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) { }
+                                            // Optional autoscroll
                                         }
                                     }
                                 },
@@ -138,7 +136,8 @@ struct ChatView: View {
                                     }
                                 }
                             )
-                            .id(msg.id)
+                            // ID jest ważne dla scrollowania, ale lokalne wiadomości mają localID
+                            .id(msg.id ?? 0) // Fallback dla lokalnych (można poprawić w ForEach używając id: \.self jeśli Models.swift implementuje Hashable/Identifiable poprawnie z UUID)
                         }
                     }.padding(.horizontal)
                     
@@ -146,12 +145,9 @@ struct ChatView: View {
                 }
             }
             .onChange(of: chatManager.messages) {
-                // Logika scrollowania z oryginalnego pliku
                 let count = chatManager.messages.count
                 guard let last = chatManager.messages.last else { return }
                 if previousMessageCount == 0 || (count - previousMessageCount) > 1 {
-                    // Nie scrollujemy na dół, jeśli załadowaliśmy stare wiadomości (czyli różnica > 1 i jesteśmy wysoko)
-                    // Ale scrollujemy, jeśli to pierwsze załadowanie (prev == 0)
                      if previousMessageCount == 0 {
                          DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { proxy.scrollTo("bottomID", anchor: .bottom) }
                      }
@@ -215,7 +211,11 @@ struct ChatView: View {
             return
         }
         guard !messageInput.isEmpty else { return }
-        let text = messageInput; messageInput = ""
+        
+        // OPTIMISTIC UI: Czyścimy input od razu
+        let text = messageInput
+        messageInput = ""
+        
         Task { await chatManager.sendMessage(text) }
     }
 }
