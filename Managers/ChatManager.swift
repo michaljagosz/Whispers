@@ -418,8 +418,20 @@ class ChatManager {
                                             }
                                             let senderName = self.contacts.first(where: { $0.id == message.sender_id })?.name ?? Strings.someone
                                             let body = (message.type == "file") ? Strings.fileSentInfo(message.file_name ?? Strings.defaultDocName) : message.content
-                                            self.sendSystemNotification(title: senderName, body: body)
+                                            self.sendSystemNotification(title: senderName, body: body, senderID: message.sender_id)
                                         }
+                                        NSSound(named: "Glass")?.play()
+                                        if message.type == "file" && message.file_status == "pending" {
+                                            NotificationCenter.default.post(name: .incomingFile, object: nil)
+                                        } else {
+                                            NotificationCenter.default.post(name: .unreadMessage, object: nil)
+                                        }
+
+                                        let senderName = self.contacts.first(where: { $0.id == message.sender_id })?.name ?? Strings.someone
+                                        let body = (message.type == "file") ? Strings.fileSentInfo(message.file_name ?? Strings.defaultDocName) : message.content
+
+                                        // ✅ ZMIANA: Przekazujemy message.sender_id
+                                        self.sendSystemNotification(title: senderName, body: body, senderID: message.sender_id)
                                     }
                                 }
                             }
@@ -701,10 +713,15 @@ class ChatManager {
     private func saveContacts() { if let encoded = try? JSONEncoder().encode(contacts) { UserDefaults.standard.set(encoded, forKey: "savedContacts") } }
     private func loadContacts() { if let data = UserDefaults.standard.data(forKey: "savedContacts"), let decoded = try? JSONDecoder().decode([Contact].self, from: data) { self.contacts = decoded } }
     
-    private func sendSystemNotification(title: String, body: String) {
+    private func sendSystemNotification(title: String, body: String, senderID: UUID) {
         let content = UNMutableNotificationContent()
         content.title = title
         content.body = body
+        content.sound = .default
+        
+        // Teraz 'senderID' jest dostępne, bo dodaliśmy je w nawiasie powyżej
+        content.userInfo = ["senderID": senderID.uuidString]
+        
         UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil))
     }
 }

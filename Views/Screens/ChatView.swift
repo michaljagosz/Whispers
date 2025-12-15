@@ -12,24 +12,25 @@ struct ChatView: View {
     var contact: Contact
     var chatManager: ChatManager
     
-    // Stany przekazane z ContentView
     @Binding var messageInput: String
     @Binding var isSendingFile: Bool
     @Binding var pendingFileData: Data?
     @Binding var pendingFileName: String?
     
-    // Lokalne stany
     @State private var previousMessageCount = 0
     @FocusState private var isInputFocused: Bool
     @State private var messageToEdit: Message?
     @State private var editContent = ""
     @State private var showEditAlert = false
     
+    // ✅ NOWE STANY DLP
+    @State private var showDLPAlert = false
+    @State private var dlpWarningMessage = ""
+    
     var body: some View {
         VStack(spacing: 0) {
             messagesList
             
-            // Wskaźnik pisania
             if chatManager.typingUserID == contact.id {
                 HStack {
                     TypingIndicatorView()
@@ -39,14 +40,13 @@ struct ChatView: View {
                 .padding(.horizontal, 20).padding(.bottom, 4).transition(.opacity)
             }
             
-            // Podgląd pliku
             if let fileName = pendingFileName {
                 filePreviewBar(fileName: fileName)
             }
             
-            // Pasek wpisywania
             inputBar
         }
+        // Alert edycji (bez zmian)
         .alert(Strings.editMsgTitle, isPresented: $showEditAlert) {
             TextField(Strings.msgContent, text: $editContent)
             Button(Strings.save) {
@@ -56,26 +56,30 @@ struct ChatView: View {
             }
             Button(Strings.cancel, role: .cancel) { }
         }
+        // ✅ NOWY ALERT: DLP
+        .alert("Wykryto dane wrażliwe", isPresented: $showDLPAlert) {
+            Button("Wyślij mimo to", role: .destructive) {
+                performSend() // Wymuszenie wysłania
+            }
+            Button("Anuluj", role: .cancel) { }
+        } message: {
+            Text(dlpWarningMessage)
+        }
     }
     
     var messagesList: some View {
+        // ... (Cała sekcja messagesList BEZ ZMIAN - skopiuj z poprzedniej wersji)
         ScrollViewReader { proxy in
             ScrollView {
-                // ✅ TRIGGER PAGINACJI NA GÓRZE
                 if chatManager.canLoadMoreMessages {
                     GeometryReader { geo in
                         Color.clear.preference(key: ViewOffsetKey.self, value: geo.frame(in: .global).minY)
                     }
                     .frame(height: 20)
                     .onPreferenceChange(ViewOffsetKey.self) { value in
-                        if value > 0 { // Użytkownik przewinął na samą górę
-                            Task { await chatManager.loadOlderMessages() }
-                        }
+                        if value > 0 { Task { await chatManager.loadOlderMessages() } }
                     }
-                    
-                    if chatManager.isLoading {
-                        ProgressView().controlSize(.small).padding(5)
-                    }
+                    if chatManager.isLoading { ProgressView().controlSize(.small).padding(5) }
                 }
                 
                 if chatManager.isLoading && chatManager.messages.isEmpty {
@@ -84,7 +88,6 @@ struct ChatView: View {
                     LazyVStack(spacing: 0) {
                         Color.clear.frame(height: 10)
                         ForEach(Array(chatManager.messages.enumerated()), id: \.element.id) { index, msg in
-                            // 1. Logika sprawdzania daty (Czy to nowy dzień?)
                             let showDateHeader: Bool = {
                                 if index == 0 { return true }
                                 guard let current = msg.created_at,
@@ -92,12 +95,8 @@ struct ChatView: View {
                                 return !Calendar.current.isDate(current, inSameDayAs: previous)
                             }()
                             
-                            // 2. Wyświetlenie nagłówka daty
-                            if showDateHeader, let date = msg.created_at {
-                                DateHeader(date: date)
-                            }
+                            if showDateHeader, let date = msg.created_at { DateHeader(date: date) }
                             
-                            // 3. Logika grupowania dymków
                             let isPrevSame: Bool = {
                                 if index == 0 || showDateHeader { return false }
                                 return chatManager.messages[index-1].sender_id == msg.sender_id
@@ -111,36 +110,19 @@ struct ChatView: View {
                                 return chatManager.messages[index+1].sender_id == msg.sender_id
                             }()
                             
-                            // 4. Właściwy dymek wiadomości
                             MessageBubble(
                                 message: msg,
                                 isMe: msg.sender_id == chatManager.myID,
                                 isPreviousFromSameSender: isPrevSame,
                                 isNextFromSameSender: isNextSame,
                                 chatManager: chatManager,
-                                onExpand: {
-                                    if msg.id == chatManager.messages.last?.id {
-                                        DispatchQueue.main.async {
-                                            // Optional autoscroll
-                                        }
-                                    }
-                                },
-                                onEdit: {
-                                    messageToEdit = msg
-                                    editContent = msg.content
-                                    showEditAlert = true
-                                },
-                                onDelete: {
-                                    if let id = msg.id {
-                                        Task { await chatManager.deleteMessage(messageID: id) }
-                                    }
-                                }
+                                onExpand: { },
+                                onEdit: { messageToEdit = msg; editContent = msg.content; showEditAlert = true },
+                                onDelete: { if let id = msg.id { Task { await chatManager.deleteMessage(messageID: id) } } }
                             )
-                            // ID jest ważne dla scrollowania, ale lokalne wiadomości mają localID
-                            .id(msg.id ?? 0) // Fallback dla lokalnych (można poprawić w ForEach używając id: \.self jeśli Models.swift implementuje Hashable/Identifiable poprawnie z UUID)
+                            .id(msg.id ?? 0)
                         }
                     }.padding(.horizontal)
-                    
                     Color.clear.frame(height: 15).id("bottomID")
                 }
             }
@@ -148,9 +130,7 @@ struct ChatView: View {
                 let count = chatManager.messages.count
                 guard let last = chatManager.messages.last else { return }
                 if previousMessageCount == 0 || (count - previousMessageCount) > 1 {
-                     if previousMessageCount == 0 {
-                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { proxy.scrollTo("bottomID", anchor: .bottom) }
-                     }
+                     if previousMessageCount == 0 { DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { proxy.scrollTo("bottomID", anchor: .bottom) } }
                 } else if count > previousMessageCount {
                     if last.sender_id == chatManager.myID { withAnimation { proxy.scrollTo("bottomID", anchor: .bottom) } }
                 }
@@ -201,7 +181,9 @@ struct ChatView: View {
         }.padding(12).background(.ultraThinMaterial)
     }
     
+    // ✅ ZMODYFIKOWANA FUNKCJA SEND
     func sendMessage() {
+        // 1. Obsługa plików (mają priorytet, nie sprawdzamy DLP dla nazw plików)
         if let data = pendingFileData, let name = pendingFileName {
             isSendingFile = true
             Task {
@@ -210,12 +192,25 @@ struct ChatView: View {
             }
             return
         }
+        
         guard !messageInput.isEmpty else { return }
         
-        // OPTIMISTIC UI: Czyścimy input od razu
+        // 2. SPRAWDZENIE DLP
+        if let risk = DLPHelper.shared.analyze(messageInput) {
+            // Ryzyko wykryte! Pokaż alert.
+            dlpWarningMessage = risk.warningMessage
+            showDLPAlert = true
+            return
+        }
+        
+        // 3. Jeśli czysto -> wyślij
+        performSend()
+    }
+    
+    // Funkcja pomocnicza, wywoływana "po dobroci" lub "na siłę" (z alertu)
+    func performSend() {
         let text = messageInput
         messageInput = ""
-        
         Task { await chatManager.sendMessage(text) }
     }
 }

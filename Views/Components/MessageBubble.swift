@@ -14,6 +14,10 @@ struct MessageBubble: View {
     @State private var showDetails = false
     @State private var isDownloading = false
     
+    // ✅ NOWE STANY: Do obsługi bezpiecznych linków
+    @State private var showLinkAlert = false
+    @State private var urlToOpen: URL?
+    
     var body: some View {
         HStack(alignment: .bottom, spacing: 8) {
             // IKONY STATUSU (tylko dla mnie)
@@ -49,6 +53,7 @@ struct MessageBubble: View {
                 } else {
                     Group {
                         if message.type == "file", let fileName = message.file_name {
+                            // --- SEKCJA PLIKU (Bez zmian) ---
                             VStack(alignment: .leading, spacing: 6) {
                                 HStack(spacing: 12) {
                                     ZStack {
@@ -95,9 +100,20 @@ struct MessageBubble: View {
                             }
                             .padding(10)
                         } else {
+                            // --- SEKCJA TEKSTU Z INTERCEPTOREM LINKÓW ---
                             VStack(alignment: .leading, spacing: 2) {
-                                Text(message.content)
-                            }.padding(.horizontal, 12).padding(.vertical, 8)
+                                Text(.init(message.content))
+                                    .textSelection(.enabled)
+                                    // ✅ INTERCEPTOR: Przechwytuje kliknięcie w link
+                                    .environment(\.openURL, OpenURLAction { url in
+                                        // Zapisujemy URL i pokazujemy alert
+                                        self.urlToOpen = url
+                                        self.showLinkAlert = true
+                                        // Zwracamy .handled, żeby system NIE otwierał przeglądarki automatycznie
+                                        return .handled
+                                    })
+                            }
+                            .padding(.horizontal, 12).padding(.vertical, 8)
                         }
                     }
                     .foregroundStyle(isMe ? Color(nsColor: .selectedControlTextColor) : .white)
@@ -114,47 +130,62 @@ struct MessageBubble: View {
                         withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) { showDetails.toggle() }
                         if showDetails { onExpand?() }
                     }
-                    .contextMenu { if isMe { if message.type != "file" { Button { onEdit?() } label: { Label(Strings.edit, systemImage: "pencil") } }; Button(role: .destructive) { onDelete?() } label: { Label(Strings.delete, systemImage: "trash") } } }
+                    .contextMenu {
+                        if isMe {
+                            if message.type != "file" {
+                                Button { onEdit?() } label: { Label(Strings.edit, systemImage: "pencil") }
+                            }
+                            Button(role: .destructive) { onDelete?() } label: { Label(Strings.delete, systemImage: "trash") }
+                        }
+                        Button {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(message.content, forType: .string)
+                        } label: {
+                            Label("Kopiuj treść", systemImage: "doc.on.doc")
+                        }
+                    }
+                    // ✅ ALERT BEZPIECZEŃSTWA
+                    .alert("Zewnętrzny link", isPresented: $showLinkAlert) {
+                        Button("Anuluj", role: .cancel) { }
+                        Button("Otwórz stronę") {
+                            if let url = urlToOpen {
+                                NSWorkspace.shared.open(url)
+                            }
+                        }
+                    } message: {
+                        if let url = urlToOpen {
+                            Text("Ten link prowadzi do zewnętrznej strony:\n\n\(url.absoluteString)\n\nCzy na pewno chcesz kontynuować?")
+                        }
+                    }
                 }
                 
                 if showDetails && message.is_deleted != true {
                     HStack(spacing: 4) {
                         if let d = message.created_at { Text(d.formatted(date: .omitted, time: .shortened)).font(.system(size: 9)).foregroundStyle(.white.opacity(0.5)) }
-                        
-                        if message.edited_at != nil {
-                            Text(Strings.editedTag)
-                                .font(.system(size: 9))
-                                .foregroundStyle(.white.opacity(0.5))
-                        }
-                        
+                        if message.edited_at != nil { Text(Strings.editedTag).font(.system(size: 9)).foregroundStyle(.white.opacity(0.5)) }
                         if isMe { Image(systemName: message.is_read == true ? "checkmark.circle.fill" : "checkmark.circle").font(.system(size: 10)).foregroundStyle(.white.opacity(message.is_read == true ? 0.8 : 0.4)) }
                     }
                     .padding(.horizontal, 4)
                 }
             }
-            // Zmiana przezroczystości dla wysyłanych
             .opacity(message.status == .sending ? 0.7 : 1.0)
             
             if !isMe { Spacer() }
         }.padding(.bottom, isNextFromSameSender ? 2 : 10)
     }
     
-    // ✅ BEZPIECZNE POBIERANIE Z TempFileManager
+    // Funkcje pomocnicze (bez zmian)
     func downloadAndOpenFile() {
         guard let originalName = message.file_name else { return }
         isDownloading = true
         Task {
             if let data = await chatManager.downloadFile(message: message) {
                 await MainActor.run {
-                    // Użycie managera plików tymczasowych
                     let fileURL = TempFileManager.shared.getUniqueFileURL(fileName: originalName)
-                    
                     do {
                         try data.write(to: fileURL)
                         NSWorkspace.shared.open(fileURL)
-                    } catch {
-                        print("Błąd zapisu: \(error)")
-                    }
+                    } catch { print("Błąd zapisu: \(error)") }
                     isDownloading = false
                 }
             } else { await MainActor.run { isDownloading = false } }

@@ -21,7 +21,8 @@ struct MenuBarChatApp: App {
     }
 }
 
-class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
+// ✅ ZMIANA 1: Dodajemy NSPopoverDelegate do listy protokołów
+class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate, NSPopoverDelegate {
     var statusItem: NSStatusItem?
     var popover = NSPopover()
     var eventMonitor: Any?
@@ -30,7 +31,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     var chatManager = ChatManager()
     
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // Przekazujemy chatManager do ContentView (który teraz jest lżejszy i czytelniejszy!)
         TempFileManager.shared.clearCache()
         
         let contentView = ContentView(chatManager: chatManager)
@@ -39,12 +39,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         popover.behavior = .transient
         popover.contentViewController = NSHostingController(rootView: contentView)
         
+        // ✅ ZMIANA 2: Ustawiamy delegata, aby wykrywać zamknięcie okna
+        popover.delegate = self
+        
         // Setup Ikony
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = statusItem?.button {
             let iconView = NSHostingView(rootView: MenuBarIconView())
-            
-            // Poprawione marginesy (38px)
             iconView.frame = NSRect(x: 0, y: 0, width: 38, height: 22)
             
             button.subviews.forEach { $0.removeFromSuperview() }
@@ -60,25 +61,58 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
             button.target = self
         }
         
-        // Powiadomienia Systemowe
         UNUserNotificationCenter.current().delegate = self
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in }
         
-        // Globalny Skrót
         setupGlobalShortcut()
+    }
+    
+    // ✅ ZMIANA 3: Ta funkcja wywoła się AUTOMATYCZNIE, gdy popover zniknie (kliknięcie poza okno)
+    func popoverDidClose(_ notification: Notification) {
+        // Natychmiast zablokuj aplikację po zamknięciu okienka
+        AppLockManager.shared.lock()
+        print("🔒 Popover zamknięty – aplikacja zablokowana.")
     }
     
     func applicationWillTerminate(_ notification: Notification) {
         print("🛑 Zamykanie aplikacji... Ustawianie statusu offline.")
-        
         TempFileManager.shared.clearCache()
-        
         chatManager.setOfflineStatus()
     }
     
     func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification, withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
         completionHandler([.banner, .sound, .list])
     }
+    
+    func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse, withCompletionHandler completionHandler: @escaping () -> Void) {
+            
+            // 1. Pobieramy ukryte ID z powiadomienia
+            let userInfo = response.notification.request.content.userInfo
+            
+            if let senderIDString = userInfo["senderID"] as? String,
+               let senderID = UUID(uuidString: senderIDString) {
+                
+                // 2. Przełączamy wątek na główny, bo będziemy zmieniać UI
+                DispatchQueue.main.async {
+                    // 3. Otwieramy okno aplikacji (jeśli zamknięte)
+                    self.togglePopover(nil)
+                    
+                    // 4. Szukamy kontaktu w załadowanej liście
+                    if let contact = self.chatManager.contacts.first(where: { $0.id == senderID }) {
+                        // 5. Ustawiamy go jako aktywnego -> SwiftUI automatycznie przełączy widok na ChatView
+                        self.chatManager.currentContact = contact
+                        
+                        // Opcjonalnie: Czyścimy status "nieprzeczytane"
+                        self.chatManager.markMessagesAsRead(from: senderID)
+                        
+                        // Pobieramy historię rozmowy
+                        Task { await self.chatManager.fetchMessages() }
+                    }
+                }
+            }
+            
+            completionHandler()
+        }
     
     func setupGlobalShortcut() {
         let shortcutKey = UserDefaults.standard.string(forKey: "globalShortcut") ?? "ctrl_opt_w"
@@ -105,6 +139,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         if let button = statusItem?.button {
             if popover.isShown {
                 popover.performClose(sender)
+                // performClose wyzwoli popoverDidClose, więc blokada zadziała
             } else {
                 popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
                 NSApp.activate(ignoringOtherApps: true)

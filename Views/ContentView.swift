@@ -18,11 +18,14 @@ struct ContentView: View {
     @State private var showFileAlert = false
     let maxFileSize: Int64 = 50 * 1024 * 1024
     
+    // App Lock Manager (do nakładki blokady)
+    @State private var lockManager = AppLockManager.shared
+
     var body: some View {
         @Bindable var chatManager = chatManager
         NavigationStack {
             VStack(spacing: 0) {
-                // HEADER (z nowego pliku)
+                // HEADER
                 HeaderView(
                     chatManager: chatManager,
                     searchText: $searchText,
@@ -65,8 +68,12 @@ struct ContentView: View {
             }
         }
         .frame(width: 340, height: 550)
-        .background(Color(.windowBackgroundColor)) // Sprawdź czy masz ten kolor w Assets, jeśli nie użyj systemowego
+        .background(Color.clear) // Ważne dla WindowAccessor
         .background(.ultraThinMaterial)
+        // ✅ 1. STEALTH MODE: Ukrywanie okna przed nagrywaniem ekranu
+        .background(WindowAccessor { window in
+            window?.sharingType = .none
+        })
         .animation(.default, value: chatManager.isConnected)
         .animation(.easeInOut, value: isDropTargeted)
         .alert(Strings.fileTooLargeTitle, isPresented: $showFileAlert) {
@@ -74,11 +81,20 @@ struct ContentView: View {
         } message: {
             Text(Strings.fileTooLargeMsg)
         }
-        // 🆕 NOWY ALERT BŁĘDÓW OGÓLNYCH:
         .alert(Strings.errorOccurred, isPresented: $chatManager.showError) {
             Button(Strings.ok, role: .cancel) { }
         } message: {
             Text(chatManager.errorMessage)
+        }
+        // ✅ 2. APP LOCK OVERLAY
+        .overlay {
+            if lockManager.isLocked {
+                LockScreenView()
+                    .transition(.opacity.animation(.easeInOut(duration: 0.3)))
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.willResignActiveNotification)) { _ in
+            lockManager.lock()
         }
     }
     
@@ -107,13 +123,10 @@ struct ContentView: View {
         .allowsHitTesting(false)
     }
     
-    // Funkcja handleDrop pozostaje tutaj, bo dotyczy całego okna
     func handleDrop(providers: [NSItemProvider]) -> Bool {
         guard let provider = providers.first else { return false }
         if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
             provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { (item, error) in
-                // ... (Twoja logika ładowania pliku z oryginalnego pliku)
-                // Pamiętaj o ustawianiu pendingFileData i pendingFileName
                 var fileURL: URL? = nil
                 if let url = item as? URL {
                     fileURL = url
@@ -142,4 +155,19 @@ struct ContentView: View {
         }
         return false
     }
+}
+
+// ✅ 3. POMOCNICZY STRUCT: Dostęp do NSWindow
+struct WindowAccessor: NSViewRepresentable {
+    var callback: (NSWindow?) -> Void
+    
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        DispatchQueue.main.async {
+            self.callback(view.window)
+        }
+        return view
+    }
+    
+    func updateNSView(_ nsView: NSView, context: Context) {}
 }
